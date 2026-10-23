@@ -1,0 +1,2 @@
+Translate the script from {{source_language}} to {{target_language}} for a spoken video. Keep meaning, tone and sentence count. Keep each sentence close to the original length so timing fits. Do not translate these terms; keep them exactly: {{glossary_terms}}. For Hinglish, keep English technical words in English and write Hindi in Latin script. Output the translated script only, one sentence per line.
+Script: {{script}}

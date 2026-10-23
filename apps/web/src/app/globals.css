@@ -1,0 +1,185 @@
+@import "tailwindcss";
+
+/*
+  Design tokens. One accent (teal) used only for the primary action and active
+  chips. Light ground by default; dark follows the system.
+*/
+:root {
+  color-scheme: light;
+  --bg: #f6f7f8;
+  --surface: #ffffff;
+  --surface-2: #eef0f2;
+  --fg: #121417;
+  --muted: #5e6672;
+  --line: #e2e5e9;
+  --accent: #0f766e;
+  --accent-strong: #0b5f59;
+  --accent-soft: #d9f1ee;
+  --on-accent: #ffffff;
+  --amber: #a16207;
+  --amber-soft: #fef3c7;
+  --red: #b91c1c;
+  --red-soft: #fee2e2;
+  --green: #15803d;
+  --green-soft: #dcfce7;
+  --ring: #0f766e;
+  /* Chart marks (admin usage): one teal hue, two steps, validated against --surface. */
+  --viz-1: #0f766e;
+  --viz-1-soft: #5fb5aa;
+  --tabbar-h: 64px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: #0e1013;
+    --surface: #171a1f;
+    --surface-2: #22262d;
+    --fg: #eef0f3;
+    --muted: #9aa3ae;
+    --line: #2a2f37;
+    --accent: #2dd4bf;
+    --accent-strong: #5eead4;
+    --accent-soft: #123b37;
+    --on-accent: #06231f;
+    --amber: #fbbf24;
+    --amber-soft: #3a2d0b;
+    --red: #f87171;
+    --red-soft: #3f1515;
+    --green: #4ade80;
+    --green-soft: #10301c;
+    --ring: #2dd4bf;
+    --viz-1: #2dd4bf;
+    --viz-1-soft: #1d6e66;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-accent-soft: var(--accent-soft);
+  --color-on-accent: var(--on-accent);
+  --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
+  --color-red: var(--red);
+  --color-red-soft: var(--red-soft);
+  --color-green: var(--green);
+  --color-green-soft: var(--green-soft);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --radius-card: 16px;
+}
+
+html {
+  height: 100%;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+/* Visible focus for keyboard users, on everything. */
+:focus-visible {
+  outline: 3px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+button,
+[role="button"] {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+/* Horizontal chip rails: scroll, no visible bar, snap lightly. */
+.rail {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-inline: 16px;
+  margin-inline: -16px;
+  scroll-padding-inline: 16px;
+}
+.rail::-webkit-scrollbar {
+  display: none;
+}
+.rail > * {
+  flex: 0 0 auto;
+}
+
+/* Skeleton shimmer. */
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--surface-2) 25%, var(--line) 37%, var(--surface-2) 63%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: 10px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* Teleprompter text; scrolled from the recorder's animation frame. */
+.teleprompter {
+  font-size: 22px;
+  line-height: 1.45;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+}
+
+.safe-pb {
+  padding-bottom: calc(16px + var(--safe-bottom));
+}
+
+/* Pinned bottom action area (above tab bar on mobile). */
+.pinned {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(10px);
+  border-top: 1px solid var(--line);
+}
+@media (min-width: 1024px) {
+  .pinned {
+    left: 256px;
+  }
+}

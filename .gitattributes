@@ -1,0 +1,6 @@
+# Keep LF line endings in the repo (shell scripts, Dockerfiles and YAML need them).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.svg text
+*.ico binary

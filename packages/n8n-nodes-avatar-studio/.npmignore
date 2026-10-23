@@ -1,0 +1,9 @@
+node_modules
+*.tsbuildinfo
+credentials
+nodes
+scripts
+.eslintrc.js
+.prettierrc.js
+gulpfile.js
+tsconfig.json

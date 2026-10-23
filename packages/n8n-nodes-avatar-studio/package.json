@@ -1,0 +1,57 @@
+{
+  "name": "n8n-nodes-avatar-studio",
+  "version": "0.1.0",
+  "description": "n8n community node for Avatar Studio: create AI avatar videos, wait for renders, and start workflows from signed webhooks.",
+  "keywords": [
+    "n8n-community-node-package",
+    "avatar studio",
+    "ai avatar",
+    "ai video",
+    "talking head",
+    "webhook"
+  ],
+  "license": "MIT",
+  "author": {
+    "name": "Avatar Studio"
+  },
+  "main": "index.js",
+  "files": [
+    "dist",
+    "index.js"
+  ],
+  "engines": {
+    "node": ">=18.10"
+  },
+  "scripts": {
+    "build": "tsc && gulp build:icons",
+    "dev": "tsc --watch",
+    "format": "prettier nodes credentials --write",
+    "lint": "eslint nodes credentials package.json",
+    "lintfix": "eslint nodes credentials package.json --fix",
+    "prepublishOnly": "npm run build && npm run lint",
+    "smoke": "bash scripts/smoke.sh"
+  },
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/credentials/AvatarStudioApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/AvatarStudio/AvatarStudio.node.js",
+      "dist/nodes/AvatarStudioTrigger/AvatarStudioTrigger.node.js"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.0",
+    "eslint-plugin-n8n-nodes-base": "^1.16.3",
+    "gulp": "^5.0.0",
+    "n8n-workflow": "^2.16.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4"
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  }
+}

@@ -1,0 +1,17 @@
+.env
+data/
+node_modules/
+.next/
+out/
+dist/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.log
+.DS_Store
+Thumbs.db
+apps/web/next-env.d.ts
+apps/web/.vercel
+packages/*/node_modules/
+packages/*/dist/

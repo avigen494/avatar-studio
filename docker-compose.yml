@@ -1,0 +1,81 @@
+# Avatar Studio on one VPS: Postgres, Redis, API, worker, web.
+# Copy .env.example to .env and fill in the keys before `docker compose up -d`.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: avatar
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-avatar}
+      POSTGRES_DB: avatar
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U avatar"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redisdata:/data
+
+  api:
+    build: ./apps/api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://avatar:${POSTGRES_PASSWORD:-avatar}@db:5432/avatar
+      REDIS_URL: redis://redis:6379/0
+      AUTO_CREATE_TABLES: "false"
+      LOCAL_STORAGE_ROOT: /data/storage
+      WORK_DIR: /data/work
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"
+    volumes:
+      - mediadata:/data
+      - ./prompts:/prompts:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  worker:
+    build: ./apps/api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://avatar:${POSTGRES_PASSWORD:-avatar}@db:5432/avatar
+      REDIS_URL: redis://redis:6379/0
+      AUTO_CREATE_TABLES: "false"
+      LOCAL_STORAGE_ROOT: /data/storage
+      WORK_DIR: /data/work
+      WORKER_ID: worker-1
+    command: python -m app.worker
+    volumes:
+      - mediadata:/data
+      - ./prompts:/prompts:ro
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_URL: ${API_BASE_URL:-http://localhost:8000}
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:-}
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  redisdata:
+  mediadata:

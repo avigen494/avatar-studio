@@ -1,0 +1,482 @@
+import type { INodeProperties } from 'n8n-workflow';
+
+import { afterVideoCreate, afterVideoGenerate, prepareBatchBody } from '../GenericFunctions';
+import {
+	aspectOptions,
+	engineModeOptions,
+	expressionOptions,
+	gazeOptions,
+	gestureOptions,
+	languageOptions,
+	qualityOptions,
+	videoStatusOptions,
+	voiceStyleOptions,
+} from './SharedOptions';
+
+const showVideo = { resource: ['video'] };
+
+
+export const videoOperations: INodeProperties[] = [
+	{
+		displayName: 'Operation',
+		name: 'operation',
+		type: 'options',
+		noDataExpression: true,
+		displayOptions: { show: showVideo },
+		options: [
+			{
+				name: 'Batch',
+				value: 'batch',
+				action: 'Create a batch of videos',
+				description: 'Create (and optionally queue) up to 100 videos in one call',
+				routing: {
+					request: { method: 'POST', url: '/videos/batch' },
+					send: { preSend: [prepareBatchBody] },
+				},
+			},
+			{
+				name: 'Cancel',
+				value: 'cancel',
+				action: 'Cancel a video',
+				description: 'Cancel a queued or rendering video',
+				routing: {
+					request: { method: 'POST', url: '=/videos/{{$parameter.videoId}}/cancel' },
+				},
+			},
+			{
+				name: 'Create',
+				value: 'create',
+				action: 'Create a video',
+				description: 'Create a video draft, optionally queue the render and wait for it',
+				routing: {
+					request: { method: 'POST', url: '/videos' },
+					output: { postReceive: [afterVideoCreate] },
+				},
+			},
+			{
+				name: 'Estimate',
+				value: 'estimate',
+				action: 'Estimate credits for a script',
+				description: 'Estimate duration and credits before committing',
+				routing: {
+					request: { method: 'POST', url: '/videos/estimate' },
+				},
+			},
+			{
+				name: 'Generate',
+				value: 'generate',
+				action: 'Generate a video',
+				description: 'Queue the render of a draft video (credits are charged only on success)',
+				routing: {
+					request: { method: 'POST', url: '=/videos/{{$parameter.videoId}}/generate' },
+					output: { postReceive: [afterVideoGenerate] },
+				},
+			},
+			{
+				name: 'Get',
+				value: 'get',
+				action: 'Get a video',
+				description: 'Fetch a video, including a fresh signed output_url once it has finished',
+				routing: {
+					request: { method: 'GET', url: '=/videos/{{$parameter.videoId}}' },
+				},
+			},
+			{
+				name: 'List',
+				value: 'list',
+				action: 'List videos',
+				description: 'List videos in the workspace',
+				routing: {
+					request: { method: 'GET', url: '/videos' },
+					output: {
+						postReceive: [{ type: 'rootProperty', properties: { property: 'items' } }],
+					},
+				},
+			},
+		],
+		default: 'create',
+	},
+];
+
+export const videoFields: INodeProperties[] = [
+	// ---------------------------------------------------------------- shared id
+	{
+		displayName: 'Video ID',
+		name: 'videoId',
+		type: 'string',
+		required: true,
+		default: '',
+		placeholder: 'ee6ebea0706e4e8a904a9bea4d96b637',
+		description: 'The ID returned by Create, List or the trigger payload',
+		displayOptions: { show: { ...showVideo, operation: ['cancel', 'generate', 'get'] } },
+	},
+
+	// ------------------------------------------------------------------ create
+	{
+		displayName: 'Avatar Name or ID',
+		name: 'identityId',
+		type: 'options',
+		description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+		required: true,
+		default: '',
+		typeOptions: { loadOptionsMethod: 'getIdentities' },
+		displayOptions: { show: { ...showVideo, operation: ['create'] } },
+		routing: { send: { type: 'body', property: 'identity_id' } },
+	},
+	{
+		displayName: 'Voice Name or ID',
+		name: 'voiceId',
+		type: 'options',
+		description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+		required: true,
+		default: '',
+		typeOptions: { loadOptionsMethod: 'getVoices' },
+		displayOptions: { show: { ...showVideo, operation: ['create'] } },
+		routing: { send: { type: 'body', property: 'voice_id' } },
+	},
+	{
+		displayName: 'Script',
+		name: 'script',
+		type: 'string',
+		required: true,
+		default: '',
+		typeOptions: { rows: 4 },
+		placeholder: 'Hi Priya, your order is on its way.',
+		description: 'What the avatar says (up to 20,000 characters)',
+		displayOptions: { show: { ...showVideo, operation: ['create'] } },
+		routing: { send: { type: 'body', property: 'script' } },
+	},
+	{
+		displayName: 'Title',
+		name: 'title',
+		type: 'string',
+		default: '',
+		description: 'Optional title shown in the Avatar Studio library (max 200 characters)',
+		displayOptions: { show: { ...showVideo, operation: ['create'] } },
+		routing: { send: { type: 'body', property: 'title', value: '={{ $value || undefined }}' } },
+	},
+	{
+		displayName: 'Language',
+		name: 'language',
+		type: 'options',
+		options: languageOptions,
+		default: 'en',
+		displayOptions: { show: { ...showVideo, operation: ['create'] } },
+		routing: { send: { type: 'body', property: 'language' } },
+	},
+	{
+		displayName: 'Aspect',
+		name: 'aspect',
+		type: 'options',
+		options: aspectOptions,
+		default: '9:16',
+		displayOptions: { show: { ...showVideo, operation: ['create'] } },
+		routing: { send: { type: 'body', property: 'aspect' } },
+	},
+	{
+		displayName: 'Quality',
+		name: 'quality',
+		type: 'options',
+		options: qualityOptions,
+		default: '720p',
+		displayOptions: { show: { ...showVideo, operation: ['create'] } },
+		routing: { send: { type: 'body', property: 'quality' } },
+	},
+	{
+		displayName: 'Captions',
+		name: 'captions',
+		type: 'boolean',
+		default: true,
+		description: 'Whether to burn captions into the video',
+		displayOptions: { show: { ...showVideo, operation: ['create'] } },
+		routing: { send: { type: 'body', property: 'captions' } },
+	},
+	{
+		displayName: 'Additional Fields',
+		name: 'additionalFields',
+		type: 'collection',
+		placeholder: 'Add Field',
+		default: {},
+		displayOptions: { show: { ...showVideo, operation: ['create'] } },
+		options: [
+			{
+				displayName: 'Engine Mode',
+				name: 'engineMode',
+				type: 'options',
+				options: engineModeOptions,
+				default: 'auto',
+				routing: { send: { type: 'body', property: 'engine_mode' } },
+			},
+			{
+				displayName: 'Expression',
+				name: 'expression',
+				type: 'options',
+				options: expressionOptions,
+				default: 'calm',
+				routing: { send: { type: 'body', property: 'motion.expression' } },
+			},
+			{
+				displayName: 'Gaze',
+				name: 'gaze',
+				type: 'options',
+				options: gazeOptions,
+				default: 'camera',
+				routing: { send: { type: 'body', property: 'motion.gaze' } },
+			},
+			{
+				displayName: 'Gesture',
+				name: 'gesture',
+				type: 'options',
+				options: gestureOptions,
+				default: 'none',
+				routing: { send: { type: 'body', property: 'motion.gesture' } },
+			},
+			{
+				displayName: 'Idempotency Key',
+				name: 'idempotencyKey',
+				type: 'string',
+				default: '',
+				placeholder: 'order-1042',
+				description:
+					'Sent as the Idempotency-Key header. Re-running the workflow with the same key returns the same video instead of creating another one.',
+				routing: { request: { headers: { 'Idempotency-Key': '={{$value}}' } } },
+			},
+			{
+				displayName: 'Look ID',
+				name: 'lookId',
+				type: 'string',
+				default: '',
+				description: 'A specific look of the avatar (see the looks array in Avatar → Get)',
+				routing: { send: { type: 'body', property: 'look_id' } },
+			},
+			{
+				displayName: 'Project ID',
+				name: 'projectId',
+				type: 'string',
+				default: '',
+				description: 'Put the video in an existing project',
+				routing: { send: { type: 'body', property: 'project_id' } },
+			},
+			{
+				displayName: 'Voice Style',
+				name: 'voiceStyle',
+				type: 'options',
+				options: voiceStyleOptions,
+				default: 'neutral',
+				routing: { send: { type: 'body', property: 'voice_style' } },
+			},
+		],
+	},
+	{
+		displayName: 'Generate Now',
+		name: 'generateNow',
+		type: 'boolean',
+		default: true,
+		description:
+			'Whether to queue the render right after the draft is created (calls POST /videos/{ID}/generate). Credits are charged only when the render succeeds.',
+		displayOptions: { show: { ...showVideo, operation: ['create'] } },
+	},
+
+	// ------------------------------------------------- wait (create + generate)
+	{
+		displayName: 'Wait for Completion',
+		name: 'waitForCompletion',
+		type: 'boolean',
+		default: true,
+		description:
+			'Whether to poll the video every 5 seconds until it is succeeded, failed or cancelled and return the final video (with output_url)',
+		displayOptions: {
+			show: { ...showVideo, operation: ['create'], generateNow: [true] },
+		},
+	},
+	{
+		displayName: 'Wait for Completion',
+		name: 'waitForCompletion',
+		type: 'boolean',
+		default: true,
+		description:
+			'Whether to poll the video every 5 seconds until it is succeeded, failed or cancelled and return the final video (with output_url)',
+		displayOptions: { show: { ...showVideo, operation: ['generate'] } },
+	},
+	{
+		displayName: 'Wait Timeout (Minutes)',
+		name: 'waitTimeout',
+		type: 'number',
+		default: 15,
+		typeOptions: { minValue: 1, maxValue: 720 },
+		description: 'Give up (and fail the item) after this many minutes',
+		displayOptions: {
+			show: { ...showVideo, operation: ['create', 'generate'], waitForCompletion: [true] },
+		},
+	},
+
+	// ---------------------------------------------------------------- estimate
+	{
+		displayName: 'Script',
+		name: 'script',
+		type: 'string',
+		required: true,
+		default: '',
+		typeOptions: { rows: 4 },
+		displayOptions: { show: { ...showVideo, operation: ['estimate'] } },
+		routing: { send: { type: 'body', property: 'script' } },
+	},
+	{
+		displayName: 'Language',
+		name: 'language',
+		type: 'options',
+		options: languageOptions,
+		default: 'en',
+		displayOptions: { show: { ...showVideo, operation: ['estimate'] } },
+		routing: { send: { type: 'body', property: 'language' } },
+	},
+	{
+		displayName: 'Engine Mode',
+		name: 'engineMode',
+		type: 'options',
+		options: engineModeOptions,
+		default: 'auto',
+		displayOptions: { show: { ...showVideo, operation: ['estimate'] } },
+		routing: { send: { type: 'body', property: 'engine_mode' } },
+	},
+	{
+		displayName: 'Quality',
+		name: 'quality',
+		type: 'options',
+		options: qualityOptions,
+		default: '720p',
+		displayOptions: { show: { ...showVideo, operation: ['estimate'] } },
+		routing: { send: { type: 'body', property: 'quality' } },
+	},
+	{
+		displayName: 'Additional Fields',
+		name: 'additionalFields',
+		type: 'collection',
+		placeholder: 'Add Field',
+		default: {},
+		displayOptions: { show: { ...showVideo, operation: ['estimate'] } },
+		options: [
+			{
+				displayName: 'Avatar Name or ID',
+				name: 'identityId',
+				type: 'options',
+				description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+				default: '',
+				typeOptions: { loadOptionsMethod: 'getIdentities' },
+				routing: { send: { type: 'body', property: 'identity_id' } },
+			},
+		],
+	},
+
+	// ------------------------------------------------------------------- batch
+	{
+		displayName: 'Items',
+		name: 'items',
+		type: 'json',
+		required: true,
+		default:
+			'[\n  {"script": "Hi Aman, welcome aboard.", "title": "Aman", "idempotency_key": "lead-1"},\n  {"script": "Hi Neha, welcome aboard.", "title": "Neha", "idempotency_key": "lead-2"}\n]',
+		description:
+			'JSON array of up to 100 items. Each needs "script"; optional keys: title, language, aspect, quality, captions, identity_id, voice_id, look_id, project_id, engine_mode, voice_style, motion, idempotency_key. Items without identity_id/voice_id use the defaults below.',
+		displayOptions: { show: { ...showVideo, operation: ['batch'] } },
+	},
+	{
+		displayName: 'Defaults',
+		name: 'defaults',
+		type: 'collection',
+		placeholder: 'Add Default',
+		default: {},
+		description: 'Applied to every item that does not set the field itself',
+		displayOptions: { show: { ...showVideo, operation: ['batch'] } },
+		options: [
+			{
+				displayName: 'Avatar Name or ID',
+				name: 'identityId',
+				type: 'options',
+				description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+				default: '',
+				typeOptions: { loadOptionsMethod: 'getIdentities' },
+				routing: { send: { type: 'body', property: 'identity_id' } },
+			},
+			{
+				displayName: 'Project ID',
+				name: 'projectId',
+				type: 'string',
+				default: '',
+				routing: { send: { type: 'body', property: 'project_id' } },
+			},
+			{
+				displayName: 'Voice Name or ID',
+				name: 'voiceId',
+				type: 'options',
+				description: 'Choose from the list, or specify an ID using an <a href="https://docs.n8n.io/code/expressions/">expression</a>',
+				default: '',
+				typeOptions: { loadOptionsMethod: 'getVoices' },
+				routing: { send: { type: 'body', property: 'voice_id' } },
+			},
+		],
+	},
+	{
+		displayName: 'Generate',
+		name: 'generate',
+		type: 'boolean',
+		default: true,
+		description:
+			'Whether to queue every item right away. Credits for the whole batch are checked first; if they are short nothing is queued and the drafts are kept (402 insufficient_credits).',
+		displayOptions: { show: { ...showVideo, operation: ['batch'] } },
+		routing: { send: { type: 'body', property: 'generate' } },
+	},
+
+	// -------------------------------------------------------------------- list
+	{
+		displayName: 'Limit',
+		name: 'limit',
+		type: 'number',
+		default: 50,
+		typeOptions: { minValue: 1 },
+		description: 'Max number of results to return',
+		displayOptions: { show: { ...showVideo, operation: ['list'] } },
+		routing: { send: { type: 'query', property: 'limit' } },
+	},
+	{
+		displayName: 'Filters',
+		name: 'filters',
+		type: 'collection',
+		placeholder: 'Add Filter',
+		default: {},
+		displayOptions: { show: { ...showVideo, operation: ['list'] } },
+		options: [
+			{
+				displayName: 'Cursor',
+				name: 'cursor',
+				type: 'string',
+				default: '',
+				description: 'The next_cursor value from a previous page',
+				routing: { send: { type: 'query', property: 'cursor' } },
+			},
+			{
+				displayName: 'Project ID',
+				name: 'projectId',
+				type: 'string',
+				default: '',
+				routing: { send: { type: 'query', property: 'project_id' } },
+			},
+			{
+				displayName: 'Search',
+				name: 'q',
+				type: 'string',
+				default: '',
+				description: 'Matches title and script',
+				routing: { send: { type: 'query', property: 'q' } },
+			},
+			{
+				displayName: 'Status',
+				name: 'status',
+				type: 'options',
+				options: videoStatusOptions,
+				default: 'succeeded',
+				routing: { send: { type: 'query', property: 'status' } },
+			},
+		],
+	},
+];
