@@ -43,6 +43,8 @@ ENV WAN_DIR=/models/Wan2.2 INFINITETALK_DIR=/models/InfiniteTalk LATENTSYNC_DIR=
 ARG IMAGE_TAG=avatar-gpu:dev
 ENV IMAGE_TAG=$IMAGE_TAG
 
+# Works whether the build context is the repo root (RunPod GitHub builds) or apps/gpu (local builds).
 WORKDIR /app
-COPY handler.py /app/handler.py
+COPY . /src
+RUN if [ -f /src/handler.py ]; then cp /src/handler.py /app/handler.py; else cp /src/apps/gpu/handler.py /app/handler.py; fi     && rm -rf /src
 CMD ["python", "-u", "/app/handler.py"]

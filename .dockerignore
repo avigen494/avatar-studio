@@ -1,0 +1,5 @@
+# Root build context is used by RunPod GitHub builds for apps/gpu/Dockerfile.
+# Send only what that image needs.
+*
+!apps/gpu/handler.py
+!apps/gpu/Dockerfile
