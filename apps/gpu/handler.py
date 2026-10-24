@@ -74,6 +74,9 @@ def ensure_weights() -> None:
     lock = WEIGHTS_ROOT / ".download.lock"
     waited = 0
     while lock.exists() and waited < 3600:  # another worker is downloading
+        if time.time() - lock.stat().st_mtime > 1800:  # left behind by a worker that was killed mid-download
+            lock.unlink(missing_ok=True)
+            break
         time.sleep(15)
         waited += 15
     missing = [(repo, sub, marker) for repo, sub, marker in WEIGHT_SETS if not (WEIGHTS_ROOT / sub / marker).exists()]
@@ -422,6 +425,15 @@ def handler(event: dict) -> dict:
 
 
 if __name__ == "__main__":
-    import runpod
+    # A worker that dies within a second loses its traceback in the RunPod log viewer.
+    # Print the error and stay alive long enough for the log shipper to catch it.
+    try:
+        import runpod
 
-    runpod.serverless.start({"handler": handler})
+        print(f"[start] avatar-gpu {IMAGE_TAG}; weights root {WEIGHTS_ROOT}", flush=True)
+        runpod.serverless.start({"handler": handler})
+    except BaseException:  # noqa: BLE001
+        traceback.print_exc()
+        print("[start] worker failed to start; see traceback above", flush=True)
+        time.sleep(20)
+        raise

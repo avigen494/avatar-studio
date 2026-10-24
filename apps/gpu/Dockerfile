@@ -1,11 +1,12 @@
 # Avatar Studio GPU worker image for RunPod serverless.
-# Base: CUDA 12.4 + PyTorch 2.4. Every model here is Apache-2.0 / MIT / BSD.
+# Base: CUDA 12.8 + PyTorch 2.8, so the same image runs on A40/L40S/H100 and on the
+# Blackwell cards (RTX PRO 6000 96 GB). Every model here is Apache-2.0 / MIT / BSD.
 #
 # Model WEIGHTS are not baked in. They live on a RunPod network volume
 # (mounted at /runpod-volume) and are downloaded once by handler.ensure_weights()
 # on the first start. That keeps this image small (code + Python deps only),
 # so cold starts are fast and rebuilding after a code change takes minutes.
-FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+FROM runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive PIP_NO_CACHE_DIR=1 HF_HUB_ENABLE_HF_TRANSFER=1
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg git git-lfs libgl1 libglib2.0-0 wget unzip \
@@ -33,6 +34,9 @@ RUN git clone --depth 1 https://github.com/hzwer/Practical-RIFE.git
 # --- v2: style training (DiffSynth-Studio, Apache-2.0) and face match (InsightFace, MIT)
 RUN git clone --depth 1 https://github.com/modelscope/DiffSynth-Studio.git && pip install -e DiffSynth-Studio
 RUN pip install insightface onnxruntime-gpu opencv-python-headless "huggingface_hub[cli]" hf_transfer runpod requests
+# Some model repos pin an older torch in their requirements; put the CUDA 12.8 build back last so
+# the image keeps working on Blackwell GPUs.
+RUN pip install --force-reinstall --no-deps torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
 
 # Weights root on the network volume. Override WEIGHTS_ROOT to keep them elsewhere.
 ENV WEIGHTS_ROOT=/runpod-volume/models
@@ -47,4 +51,7 @@ ENV IMAGE_TAG=$IMAGE_TAG
 WORKDIR /app
 COPY . /src
 RUN if [ -f /src/handler.py ]; then cp /src/handler.py /app/handler.py; else cp /src/apps/gpu/handler.py /app/handler.py; fi     && rm -rf /src
+# Fail the build, not the first worker, if the handler cannot even be imported.
+RUN python -c "import runpod, requests, torch; print('runpod', runpod.__version__, 'torch', torch.__version__)" \
+    && python -c "import importlib.util; s=importlib.util.spec_from_file_location('handler','/app/handler.py'); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print('handler imports ok')"
 CMD ["python", "-u", "/app/handler.py"]
