@@ -59,8 +59,12 @@ jobs:
             ${{ steps.tag.outputs.image }}:latest
           build-args: |
             IMAGE_TAG=avatar-gpu:${{ steps.tag.outputs.tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # The image is ~11 GB, more than the 10 GB GitHub Actions cache holds, so keep the
+          # layer cache in the registry instead; rebuilds after a handler change take minutes.
+          cache-from: |
+            type=registry,ref=${{ steps.tag.outputs.image }}:buildcache
+            type=gha
+          cache-to: type=registry,ref=${{ steps.tag.outputs.image }}:buildcache,mode=max
 
       - name: Summary
         run: |

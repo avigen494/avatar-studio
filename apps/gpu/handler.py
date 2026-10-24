@@ -125,8 +125,23 @@ IMAGE_TAG = os.environ.get("IMAGE_TAG", "avatar-gpu:dev")  # set at build time; 
 
 
 def sh(cmd: list[str], cwd: Path | None = None) -> None:
+    """Run a model command, stream its output to the worker log, and if it fails raise an
+    error that carries the last lines of that output so the app can show the real reason."""
     print("+", " ".join(str(c) for c in cmd), flush=True)
-    subprocess.run([str(c) for c in cmd], cwd=str(cwd) if cwd else None, check=True)
+    proc = subprocess.Popen([str(c) for c in cmd], cwd=str(cwd) if cwd else None,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+    tail: list[str] = []
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        print(line, end="", flush=True)
+        tail.append(line.rstrip())
+        if len(tail) > 40:
+            tail.pop(0)
+    code = proc.wait()
+    if code != 0:
+        name = Path(str(cmd[1] if len(cmd) > 1 else cmd[0])).name
+        detail = " | ".join(l for l in tail[-12:] if l.strip())
+        raise RuntimeError(f"{name} exited with code {code}: {detail}")
 
 
 def download(url: str, dst: Path) -> Path:
@@ -172,7 +187,8 @@ def run_wan_s2v(job: dict, work: Path, image: Path, audio: Path) -> Path:
     out_dir = work / "wan_out"
     out_dir.mkdir()
     # Wan2.2 S2V generate.py: speech-to-video with a reference image.
-    size = f"{job['width']}*{job['height']}"
+    # Wan2.2 S2V-14B accepts only two sizes; the finish pass scales and crops to the requested frame.
+    size = "704*1024" if job["height"] >= job["width"] else "1024*704"
     sh([PYTHON, WAN_DIR / "generate.py", "--task", "s2v-14B", "--size", size, "--ckpt_dir", WAN_S2V_CKPT,
         "--offload_model", "True", "--convert_model_dtype", "--prompt", job["prompt"], "--image", image,
         "--audio", audio, "--sample_steps", str(job.get("steps", 20)), "--base_seed", str(job.get("seed") or 42),
