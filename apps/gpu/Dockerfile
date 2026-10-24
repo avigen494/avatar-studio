@@ -62,8 +62,8 @@ ENV IMAGE_TAG=$IMAGE_TAG
 # Works whether the build context is the repo root (RunPod GitHub builds) or apps/gpu (local builds).
 WORKDIR /app
 COPY . /src
-RUN if [ -f /src/handler.py ]; then cp /src/handler.py /app/handler.py; else cp /src/apps/gpu/handler.py /app/handler.py; fi     && rm -rf /src
+RUN d=/src; [ -f /src/handler.py ] || d=/src/apps/gpu; cp $d/handler.py /app/handler.py; cp $d/check_imports.py /app/check_imports.py; rm -rf /src
 # Fail the build, not the first worker, if the handler cannot even be imported.
 RUN python -c "import runpod, requests, torch; print('runpod', runpod.__version__, 'torch', torch.__version__)" \
-    && python -c "import importlib.util; s=importlib.util.spec_from_file_location('handler','/app/handler.py'); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print('handler imports ok')"     && python -c "import diffusers.pipelines.pipeline_utils, transformers, accelerate; from accelerate.utils.memory import clear_device_cache; print('diffusers', diffusers.__version__, 'transformers', transformers.__version__, 'accelerate', accelerate.__version__)"     && cd /models/InfiniteTalk && python -c "import wan; print('infinitetalk imports ok')"     && cd /models/Wan2.2 && python -c "import wan; print('wan2.2 imports ok')"     && cd /models/LatentSync && python -c "import latentsync; print('latentsync imports ok')"     && python -c "import gfpgan, basicsr; print('gfpgan imports ok')"
+    && python -c "import importlib.util; s=importlib.util.spec_from_file_location('handler','/app/handler.py'); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print('handler imports ok')"     && python -c "import diffusers.pipelines.pipeline_utils, transformers, accelerate; from accelerate.utils.memory import clear_device_cache; print('diffusers', diffusers.__version__, 'transformers', transformers.__version__, 'accelerate', accelerate.__version__)"     && python /app/check_imports.py
 CMD ["python", "-u", "/app/handler.py"]
