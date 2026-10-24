@@ -36,7 +36,9 @@ RUN git clone --depth 1 https://github.com/modelscope/DiffSynth-Studio.git && pi
 RUN pip install insightface onnxruntime-gpu opencv-python-headless "huggingface_hub[cli]" hf_transfer runpod requests
 # Some model repos pin an older torch in their requirements; put the CUDA 12.8 build back last so
 # the image keeps working on Blackwell GPUs.
-RUN pip install --force-reinstall --no-deps torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+RUN pip install --force-reinstall --no-deps torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128 \
+    && pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128 \
+    && python -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
 
 # Weights root on the network volume. Override WEIGHTS_ROOT to keep them elsewhere.
 ENV WEIGHTS_ROOT=/runpod-volume/models

@@ -22,12 +22,12 @@ from app.services.runtime_config import cfg  # noqa: E402
 
 key, endpoint = cfg("runpod_api_key"), cfg("runpod_endpoint_id")
 if not (key and endpoint):
-    sys.exit("RunPod is not connected. Add the key and endpoint id in Settings → Connections first.")
+    sys.exit("RunPod is not connected. Add the key and endpoint id in Settings -> Connections first.")
 base = f"https://api.runpod.ai/v2/{endpoint}"
 headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
 
 HINT = (
-    "No worker has started. Open RunPod → Serverless → the endpoint → Builds: the image build from GitHub "
+    "No worker has started. Open RunPod -> Serverless -> the endpoint -> Builds: the image build from GitHub "
     "must show Completed. If it failed, open the build log and fix the Dockerfile; if there is no build, "
     "check that Max Workers is at least 1 and the GPU type is available in the volume's data center."
 )
@@ -59,7 +59,7 @@ with httpx.Client(timeout=60) as c:
                 print("done: the warm-up finished; the weights are on the volume.", flush=True)
                 break
             if jobs.get("failed"):
-                print("failed: open RunPod → the endpoint → Logs for the error.", flush=True)
+                print("failed: open RunPod -> the endpoint -> Logs for the error.", flush=True)
                 sys.exit(1)
             if mins > 20 and not any(workers.get(k) for k in ("initializing", "running", "idle", "ready")):
                 print(HINT, flush=True)
