@@ -54,4 +54,4 @@ for path, mod in CHECKS:
 import basicsr  # noqa: E402
 import gfpgan  # noqa: E402
 
-print(f"[check] gfpgan {gfpgan.__version__} / basicsr {basicsr.__version__} import ok", flush=True)
+print(f"[check] gfpgan and basicsr {getattr(basicsr, '__version__', '?')} import ok ({gfpgan.__name__})", flush=True)
