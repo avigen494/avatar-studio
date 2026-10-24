@@ -46,6 +46,9 @@ for path, mod in CHECKS:
     sys.path.insert(0, path)
     importlib.import_module(mod)
     print(f"[check] {mod} from {path} imports ok", flush=True)
+    if path.endswith("InfiniteTalk"):
+        importlib.import_module("kokoro")  # generate_infinitetalk.py imports it at the top
+        print("[check] kokoro (InfiniteTalk TTS) imports ok", flush=True)
     sys.path.pop(0)
     # Both Wan repos use the package name "wan"; drop it so the next one is imported fresh.
     for name in [n for n in sys.modules if n == mod or n.startswith(mod + ".")]:

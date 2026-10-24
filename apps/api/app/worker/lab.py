@@ -103,7 +103,7 @@ def run_engine_trial(db: Session, job: Job) -> None:
         _fail(db, job, trial.id, f"ffmpeg failed: {str(e)[-300:]}")
     except Exception as e:  # noqa: BLE001
         log.exception("trial %s crashed", trial.id)
-        _fail(db, job, trial.id, f"{type(e).__name__}: {str(e)[:300]}")
+        _fail(db, job, trial.id, f"{type(e).__name__}: {str(e)[:2000]}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
