@@ -85,6 +85,17 @@ Service keys are read through `services/runtime_config.cfg("...")`, never from `
 - 2026-10-16 Look generator uses fal.ai Flux Kontext (commercial licence) rather than a self-hosted image model; the mock keeps the exact photo and changes grade and crop so identity cannot drift in dev.
 - 2026-10-16 Style training needs at least 120 s of footage (reference clip + uploads); the worker refuses and charges nothing below that.
 
+## RunPod and the GPU image (learned 2026-10-24, the first real run)
+
+- The image is built by GitHub Actions (`.github/workflows/gpu-image.yml`) and pulled by RunPod from GHCR (public package). RunPod's own "build from GitHub" was never used successfully; do not go back to it. A new build is released by pointing the endpoint's template at the `sha-<commit>` tag (REST `PATCH /v1/templates/{id}` then `PATCH /v1/endpoints/{id}` with `templateId`), then scaling `workersMax` 0 -> 2 so stale workers die. Scripts for this live in the session scratchpad; `scripts/runpod_warmup.py` follows a queued warm-up.
+- Templates created through the REST API default to `volumeMountPath=/workspace`; serverless workers need `/runpod-volume` or the 75 GB download lands on the 30 GB container disk ("Disk quota exceeded"). The handler now refuses to download unless `/runpod-volume` is a mount.
+- The needed weights are ~152 GB (not 75): the repos total 311 GB because InfiniteTalk ships quantised and multi-person variants. `WEIGHT_SETS` carries `allow_patterns`; the volume is 250 GB.
+- The four model repos pin conflicting libraries (LatentSync pins old torch/diffusers/accelerate/transformers). The last pip step in the Dockerfile installs the one set that satisfies all of them, then reinstalls the torch trio *with* deps (a `--no-deps` reinstall leaves old CUDA runtime wheels behind: `undefined symbol cudaGetDriverEntryPointByVersion`). flash-attn is removed (optional, version check fails); xformers cu128 is required by InfiniteTalk; basicsr needs the torchvision `functional_tensor` patch; mediapipe needs `PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python`.
+- The build imports the handler and every engine (`wan` from both repos, `latentsync`, `gfpgan`) and fails if any cannot load. Keep that step: a worker that dies at import shows only "worker exited with exit code 1" on RunPod, and RunPod has no logs API.
+- Wan2.2 S2V-14B accepts only `704*1024` / `1024*704`. `sh()` streams model output and raises with the last lines so the app's error says why.
+- RunPod API keys can be restricted to one endpoint (403 on others); the GPU picker's "Out of capacity" per data centre is the usual reason a queued job never starts; the volume ties the endpoint to its data centre.
+- A browser cannot upload to R2 until the bucket has a CORS rule for the web origin. The Connections test sets it when the token allows (Admin Read & Write); an Object Read & Write token cannot, so the rule is added in the Cloudflare dashboard.
+
 ## Lessons
 
 - Browser checks on this box run with puppeteer-core against the installed Chrome (no Playwright install). Scripts live in the session scratchpad, not the repo.

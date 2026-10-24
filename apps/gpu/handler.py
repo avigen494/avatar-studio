@@ -56,7 +56,11 @@ WEIGHT_SETS = [
     ("MeiGen-AI/InfiniteTalk", "weights/InfiniteTalk", "single/infinitetalk.safetensors", ["single/*"]),
     ("Wan-AI/Wan2.2-S2V-14B", "Wan2.2-S2V-14B", "config.json", ["*.safetensors", "*.pth", "*.json", "*.txt", "*.model", "google/*", "wav2vec2-large-xlsr-53-english/*"]),
     ("ByteDance/LatentSync-1.6", "LatentSync-1.6", "latentsync_unet.pt", None),
+    # 4-step distilled LoRA for InfiniteTalk's base (Wan2.1 I2V 14B 480p); used when a job asks for <= 8 steps.
+    ("Kijai/WanVideo_comfy", "weights/lora", "Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+     ["Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors"]),
 ]
+INFINITETALK_DISTILL_LORA = "weights/lora/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors"
 # Folders an earlier, unfiltered download may have left behind; they are not used and waste the volume.
 UNUSED_WEIGHT_DIRS = ["weights/InfiniteTalk/quant_models", "weights/InfiniteTalk/multi", "weights/InfiniteTalk/comfyui",
                       "weights/Wan2.1-I2V-14B-480P/assets", "weights/Wan2.1-I2V-14B-480P/examples", "Wan2.2-S2V-14B/assets"]
@@ -124,6 +128,38 @@ PYTHON = os.environ.get("MODEL_PYTHON", "python")
 IMAGE_TAG = os.environ.get("IMAGE_TAG", "avatar-gpu:dev")  # set at build time; reported on every job for pinning
 
 
+LAST_PROFILE: dict = {}
+
+
+def gpu_diag() -> dict:
+    """What the worker can see: card, memory, offload decision, attention backends, disk."""
+    info: dict = {"gpu_memory_gb": round(gpu_memory_gb(), 1), "offload_model": offload_flag(), "image_tag": IMAGE_TAG}
+    try:
+        info["nvidia_smi"] = subprocess.run(["nvidia-smi", "--query-gpu=name,memory.total,driver_version", "--format=csv,noheader"],
+                                            capture_output=True, text=True, timeout=10).stdout.strip()
+    except Exception as e:  # noqa: BLE001
+        info["nvidia_smi"] = f"error: {e}"
+    try:
+        import torch
+
+        info["torch"] = torch.__version__
+        info["cuda_device"] = torch.cuda.get_device_name(0)
+        info["capability"] = ".".join(map(str, torch.cuda.get_device_capability(0)))
+        info["sdpa_flash"] = torch.backends.cuda.flash_sdp_enabled()
+        info["sdpa_mem_efficient"] = torch.backends.cuda.mem_efficient_sdp_enabled()
+        info["sdpa_cudnn"] = getattr(torch.backends.cuda, "cudnn_sdp_enabled", lambda: None)()
+        info["tf32"] = torch.backends.cuda.matmul.allow_tf32
+    except Exception as e:  # noqa: BLE001
+        info["torch"] = f"error: {e}"
+    try:
+        info["volume_free_gb"] = round(shutil.disk_usage(WEIGHTS_ROOT).free / 1e9, 1)
+        info["weights_present"] = {sub: (WEIGHTS_ROOT / sub / marker).exists() for _r, sub, marker, _a in WEIGHT_SETS}
+    except Exception as e:  # noqa: BLE001
+        info["volume"] = f"error: {e}"
+    info["env"] = {k: v for k, v in os.environ.items() if k.startswith(("WAN_", "INFINITETALK_", "WEIGHTS", "HANDLER_", "PROTOCOL", "HF_"))}
+    return info
+
+
 def gpu_memory_gb() -> float:
     """Total memory of the first GPU in GB (0 if unknown)."""
     try:
@@ -148,11 +184,29 @@ def sh(cmd: list[str], cwd: Path | None = None) -> None:
     tail: list[str] = []  # meaningful lines (no debug chatter / progress bars)
     raw: list[str] = []  # the last lines exactly as printed
     assert proc.stdout is not None
+    import re as _re
+
+    t_start = time.time()
+    steps: list[float] = []
+    segments = 0
+    first_bar = last_bar = None
+    bars: list[tuple] = []
+    bar_re = _re.compile(r"(\d+)/(\d+) \[[^\]]*, ([\d.]+)(s/it|it/s)\]")
     for line in proc.stdout:
         print(line, end="", flush=True)
         text = line.rstrip()
         if not text.strip():
             continue
+        # tqdm rewrites one line with carriage returns; take the last progress reading on the line.
+        for m in bar_re.finditer(text.replace("\r", "\n")):
+            spi = float(m.group(3)) if m.group(4) == "s/it" else 1.0 / max(float(m.group(3)), 1e-6)
+            steps.append(spi)
+            first_bar = first_bar or time.time()
+            last_bar = time.time()
+            if m.group(1) == m.group(2):
+                segments += 1
+                if len(bars) < 60:  # one entry per finished progress bar: (seconds since start, total steps, s/step)
+                    bars.append((round(time.time() - t_start), int(m.group(2)), round(spi, 2)))
         raw.append(text[:300])
         if len(raw) > 25:
             raw.pop(0)
@@ -161,6 +215,17 @@ def sh(cmd: list[str], cwd: Path | None = None) -> None:
             if len(tail) > 60:
                 tail.pop(0)
     code = proc.wait()
+    name0 = Path(str(cmd[1] if len(cmd) > 1 else cmd[0])).name
+    prof = {
+        "wall_s": round(time.time() - t_start, 1), "segments": segments, "progress_readings": len(steps),
+        "s_per_step_median": round(sorted(steps)[len(steps) // 2], 2) if steps else None,
+        "before_first_step_s": round(first_bar - t_start, 1) if first_bar else None,
+        "sampling_window_s": round(last_bar - first_bar, 1) if first_bar and last_bar else None,
+        "after_last_step_s": round(time.time() - last_bar, 1) if last_bar else None,
+        "bars": bars,
+    }
+    LAST_PROFILE[name0] = prof
+    print(f"[profile] {name0}: {prof}", flush=True)
     if code != 0:
         name = Path(str(cmd[1] if len(cmd) > 1 else cmd[0])).name
         detail = " | ".join(tail[-8:]) + " || RAW TAIL: " + " | ".join(raw[-15:])
@@ -216,7 +281,8 @@ def run_wan_s2v(job: dict, work: Path, image: Path, audio: Path) -> Path:
     # Wan2.2 S2V-14B accepts only two sizes; the finish pass scales and crops to the requested frame.
     size = "704*1024" if job["height"] >= job["width"] else "1024*704"
     sh([PYTHON, WAN_DIR / "generate.py", "--task", "s2v-14B", "--size", size, "--ckpt_dir", WAN_S2V_CKPT,
-        "--offload_model", offload_flag(), "--convert_model_dtype", "--prompt", job["prompt"], "--image", image,
+        "--offload_model", offload_flag(), *([] if offload_flag() == "False" else ["--convert_model_dtype"]),
+        "--prompt", job["prompt"], "--image", image,
         "--audio", audio, "--sample_steps", str(job.get("steps", 20)), "--base_seed", str(job.get("seed") or 42),
         "--save_file", out_dir / "out.mp4"],
        cwd=WAN_DIR)
@@ -231,16 +297,29 @@ def run_infinitetalk(job: dict, work: Path, media_path: Path, audio: Path, v2v: 
     cond = {"prompt": job["prompt"], "cond_video": str(media_path), "cond_audio": {"person1": str(audio)}}
     (work / "input.json").write_text(json.dumps(cond))
     size = "infinitetalk-480" if max(job["width"], job["height"]) <= 854 else "infinitetalk-720"
+    steps = int(job.get("steps", 20))
     cmd = [PYTHON, INFINITETALK_DIR / "generate_infinitetalk.py",
            "--ckpt_dir", INFINITETALK_WEIGHTS / "Wan2.1-I2V-14B-480P",
            "--wav2vec_dir", INFINITETALK_WEIGHTS / "chinese-wav2vec2-base",
            "--infinitetalk_dir", INFINITETALK_WEIGHTS / "InfiniteTalk/single/infinitetalk.safetensors",
-           "--input_json", work / "input.json", "--size", size, "--sample_steps", str(job.get("steps", 20)),
+           "--input_json", work / "input.json", "--size", size, "--sample_steps", str(steps),
            "--mode", "streaming", "--motion_frame", "9", "--base_seed", str(job.get("seed") or 42),
            "--offload_model", offload_flag(),
            "--save_file", out_dir / "out"]
+    loras: list[str] = []
+    scales: list[str] = []
+    if steps <= 8:
+        # Fast mode (InfiniteTalk README, "Run with FusioniX or Lightx2v"): the distilled LoRA needs only
+        # 4-8 steps, with text guide 1.0 and audio guide 2.0 instead of the defaults 5 and 4.
+        loras.append(str(WEIGHTS_ROOT / INFINITETALK_DISTILL_LORA))
+        scales.append("1.0")
+        cmd += ["--sample_text_guide_scale", "1.0", "--sample_audio_guide_scale", "2.0"]
+        print(f"[infinitetalk] fast mode: {steps} steps with the distilled LoRA", flush=True)
     if job.get("style_url"):
-        cmd += ["--lora_dir", work / "style.safetensors", "--lora_scale", "1.0"]
+        loras.append(str(work / "style.safetensors"))
+        scales.append("1.0")
+    if loras:
+        cmd += ["--lora_dir", *loras, "--lora_scale", *scales]
     sh(cmd, cwd=INFINITETALK_DIR)
     return newest_mp4(out_dir)
 
@@ -418,6 +497,8 @@ def handler(event: dict) -> dict:
     work = Path(tempfile.mkdtemp(prefix="avatar-"))
     try:
         task = job.get("task", "render")
+        if task == "diag":
+            return gpu_diag()
         if task == "warmup":
             ensure_weights()
             return {"ok": True, "image_tag": IMAGE_TAG, "weights_root": str(WEIGHTS_ROOT),
@@ -478,7 +559,7 @@ def handler(event: dict) -> dict:
         final = mux(raw, audio, work / "final.mp4", job["width"], job["height"], job["fps"])
         upload(job["upload_url"], final)
         return {"ok": True, "engine": engine, "gpu_seconds": round(time.time() - started, 1), "image_tag": IMAGE_TAG,
-                "seed": job.get("seed")}
+                "seed": job.get("seed"), "profile": dict(LAST_PROFILE)}
     except Exception as e:  # RunPod reports this as FAILED; the API shows a plain message and charges nothing
         traceback.print_exc()
         return {"error": f"{type(e).__name__}: {e}"[:4000]}
