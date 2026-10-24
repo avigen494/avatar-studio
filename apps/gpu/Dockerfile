@@ -63,6 +63,8 @@ ENV IMAGE_TAG=$IMAGE_TAG
 WORKDIR /app
 COPY . /src
 RUN d=/src; [ -f /src/handler.py ] || d=/src/apps/gpu; cp $d/handler.py /app/handler.py; cp $d/check_imports.py /app/check_imports.py; rm -rf /src
+# InfiniteTalk imports inspect.ArgSpec, which Python 3.11 removed; the name is never used.
+RUN sed -i '/^from inspect import ArgSpec/d' /models/InfiniteTalk/wan/multitalk.py
 # Fail the build, not the first worker, if the handler cannot even be imported.
 RUN python -c "import runpod, requests, torch; print('runpod', runpod.__version__, 'torch', torch.__version__)" \
     && python -c "import importlib.util; s=importlib.util.spec_from_file_location('handler','/app/handler.py'); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print('handler imports ok')"     && python -c "import diffusers.pipelines.pipeline_utils, transformers, accelerate; from accelerate.utils.memory import clear_device_cache; print('diffusers', diffusers.__version__, 'transformers', transformers.__version__, 'accelerate', accelerate.__version__)"     && python /app/check_imports.py
