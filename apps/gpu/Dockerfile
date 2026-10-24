@@ -36,9 +36,9 @@ RUN git clone --depth 1 https://github.com/modelscope/DiffSynth-Studio.git && pi
 RUN pip install insightface onnxruntime-gpu opencv-python-headless "huggingface_hub[cli]" hf_transfer runpod requests
 # The four model repos pin conflicting library versions (LatentSync pins old ones, Wan2.2 and
 # InfiniteTalk need newer). This set satisfies all of them and is installed last so it wins.
-RUN pip install "diffusers==0.32.2" "transformers==4.51.3" "tokenizers>=0.21,<0.22" "accelerate>=1.1.1,<2"     "huggingface_hub>=0.30,<1" "numpy==1.26.4" "peft>=0.14" "xfuser>=0.4.1"
+RUN pip install "diffusers==0.33.1" "transformers==4.51.3" "tokenizers>=0.21,<0.22" "accelerate>=1.1.1,<2"     "huggingface_hub>=0.30,<1" "numpy==1.26.4" "peft>=0.14" "xfuser>=0.4.1"
 # basicsr (used by GFPGAN) imports a torchvision module that was removed in torchvision 0.17.
-RUN f=$(python -c "import basicsr, os; print(os.path.dirname(basicsr.__file__))")/data/degradations.py     && sed -i "s/from torchvision.transforms.functional_tensor import rgb_to_grayscale/from torchvision.transforms.functional import rgb_to_grayscale/" "$f"
+RUN f=$(python -c "import importlib.util; print(importlib.util.find_spec('basicsr').submodule_search_locations[0])")/data/degradations.py     && sed -i "s/from torchvision.transforms.functional_tensor import rgb_to_grayscale/from torchvision.transforms.functional import rgb_to_grayscale/" "$f"
 # Some model repos pin an older torch in their requirements; put the CUDA 12.8 build back last so
 # the image keeps working on Blackwell GPUs.
 RUN pip install --force-reinstall --no-deps torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128 \
