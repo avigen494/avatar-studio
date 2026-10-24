@@ -134,13 +134,17 @@ def sh(cmd: list[str], cwd: Path | None = None) -> None:
     assert proc.stdout is not None
     for line in proc.stdout:
         print(line, end="", flush=True)
-        tail.append(line.rstrip())
-        if len(tail) > 40:
-            tail.pop(0)
+        text = line.rstrip()
+        # Keep the lines that explain a failure; drop debug chatter and progress bars.
+        if text.strip() and " DEBUG " not in text and "it/s]" not in text and "Warning" not in text:
+            tail.append(text)
+            if len(tail) > 60:
+                tail.pop(0)
     code = proc.wait()
     if code != 0:
         name = Path(str(cmd[1] if len(cmd) > 1 else cmd[0])).name
-        detail = " | ".join(l for l in tail[-12:] if l.strip())
+        # The exception line comes last; keep it plus the few lines before it.
+        detail = " | ".join(tail[-8:])
         raise RuntimeError(f"{name} exited with code {code}: {detail}")
 
 
@@ -454,7 +458,7 @@ def handler(event: dict) -> dict:
                 "seed": job.get("seed")}
     except Exception as e:  # RunPod reports this as FAILED; the API shows a plain message and charges nothing
         traceback.print_exc()
-        return {"error": f"{type(e).__name__}: {e}"[:500]}
+        return {"error": f"{type(e).__name__}: {e}"[:1500]}
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

@@ -50,7 +50,14 @@ class RunPodAvatarEngine(AvatarEngine):
 
     def _submit_and_wait(self, payload: dict, progress: ProgressFn) -> dict:
         with httpx.Client(timeout=60) as client:
-            r = client.post(f"{self.base}/run", headers=self.headers, json={"input": payload})
+            for attempt in range(8):
+                r = client.post(f"{self.base}/run", headers=self.headers, json={"input": payload})
+                if r.status_code != 409:  # 409: the endpoint is still applying a settings change
+                    break
+                progress(0, "GPU endpoint is updating; retrying shortly")
+                time.sleep(15 * (attempt + 1))
+            if r.status_code == 409:
+                raise RunPodError("The GPU endpoint is busy applying a change. Try again in a minute.")
             r.raise_for_status()
             job_id = r.json()["id"]
             started = time.time()
