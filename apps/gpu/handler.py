@@ -124,28 +124,50 @@ PYTHON = os.environ.get("MODEL_PYTHON", "python")
 IMAGE_TAG = os.environ.get("IMAGE_TAG", "avatar-gpu:dev")  # set at build time; reported on every job for pinning
 
 
+def gpu_memory_gb() -> float:
+    """Total memory of the first GPU in GB (0 if unknown)."""
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=10).stdout.strip().splitlines()[0]
+        return float(out) / 1024
+    except Exception:  # noqa: BLE001
+        return 0.0
+
+
+def offload_flag() -> str:
+    """CPU offloading keeps a 14B model inside 48 GB but costs a lot of time; skip it on big cards."""
+    return "False" if gpu_memory_gb() >= 70 else "True"
+
+
 def sh(cmd: list[str], cwd: Path | None = None) -> None:
     """Run a model command, stream its output to the worker log, and if it fails raise an
     error that carries the last lines of that output so the app can show the real reason."""
     print("+", " ".join(str(c) for c in cmd), flush=True)
     proc = subprocess.Popen([str(c) for c in cmd], cwd=str(cwd) if cwd else None,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
-    tail: list[str] = []
+    tail: list[str] = []  # meaningful lines (no debug chatter / progress bars)
+    raw: list[str] = []  # the last lines exactly as printed
     assert proc.stdout is not None
     for line in proc.stdout:
         print(line, end="", flush=True)
         text = line.rstrip()
-        # Keep the lines that explain a failure; drop debug chatter and progress bars.
-        if text.strip() and " DEBUG " not in text and "it/s]" not in text and "Warning" not in text:
-            tail.append(text)
+        if not text.strip():
+            continue
+        raw.append(text[:300])
+        if len(raw) > 25:
+            raw.pop(0)
+        if " DEBUG " not in text and "it/s]" not in text and "Warning" not in text:
+            tail.append(text[:300])
             if len(tail) > 60:
                 tail.pop(0)
     code = proc.wait()
     if code != 0:
         name = Path(str(cmd[1] if len(cmd) > 1 else cmd[0])).name
-        # The exception line comes last; keep it plus the few lines before it.
-        detail = " | ".join(tail[-8:])
-        raise RuntimeError(f"{name} exited with code {code}: {detail}")
+        detail = " | ".join(tail[-8:]) + " || RAW TAIL: " + " | ".join(raw[-15:])
+        msg = f"{name} exited with code {code}: {detail}"
+        if len(msg) > 3500:  # keep the END, where the exception is
+            msg = msg[:400] + " ... " + msg[-3000:]
+        raise RuntimeError(msg)
 
 
 def download(url: str, dst: Path) -> Path:
@@ -194,7 +216,7 @@ def run_wan_s2v(job: dict, work: Path, image: Path, audio: Path) -> Path:
     # Wan2.2 S2V-14B accepts only two sizes; the finish pass scales and crops to the requested frame.
     size = "704*1024" if job["height"] >= job["width"] else "1024*704"
     sh([PYTHON, WAN_DIR / "generate.py", "--task", "s2v-14B", "--size", size, "--ckpt_dir", WAN_S2V_CKPT,
-        "--offload_model", "True", "--convert_model_dtype", "--prompt", job["prompt"], "--image", image,
+        "--offload_model", offload_flag(), "--convert_model_dtype", "--prompt", job["prompt"], "--image", image,
         "--audio", audio, "--sample_steps", str(job.get("steps", 20)), "--base_seed", str(job.get("seed") or 42),
         "--save_file", out_dir / "out.mp4"],
        cwd=WAN_DIR)
@@ -215,6 +237,7 @@ def run_infinitetalk(job: dict, work: Path, media_path: Path, audio: Path, v2v: 
            "--infinitetalk_dir", INFINITETALK_WEIGHTS / "InfiniteTalk/single/infinitetalk.safetensors",
            "--input_json", work / "input.json", "--size", size, "--sample_steps", str(job.get("steps", 20)),
            "--mode", "streaming", "--motion_frame", "9", "--base_seed", str(job.get("seed") or 42),
+           "--offload_model", offload_flag(),
            "--save_file", out_dir / "out"]
     if job.get("style_url"):
         cmd += ["--lora_dir", work / "style.safetensors", "--lora_scale", "1.0"]
@@ -458,7 +481,7 @@ def handler(event: dict) -> dict:
                 "seed": job.get("seed")}
     except Exception as e:  # RunPod reports this as FAILED; the API shows a plain message and charges nothing
         traceback.print_exc()
-        return {"error": f"{type(e).__name__}: {e}"[:1500]}
+        return {"error": f"{type(e).__name__}: {e}"[:4000]}
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

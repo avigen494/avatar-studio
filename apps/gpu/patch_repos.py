@@ -17,6 +17,26 @@ FALLBACK = (
     "                         window_size=window_size, deterministic=deterministic, dtype=dtype)\n"
 )
 
+SDPA_HELPER = "\n".join([
+    "",
+    "",
+    "def _avatar_sdpa(q, k, v, attn_bias=None):",
+    "    # avatar-studio: xformers picks a Hopper-only kernel on Blackwell cards and fails;",
+    "    # PyTorch attention gives the same result. Inputs are (B, M, H, K) like xformers.",
+    "    assert attn_bias is None, 'sequence-parallel attention is not supported in this build'",
+    "    out = torch.nn.functional.scaled_dot_product_attention(",
+    "        q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2))",
+    "    return out.transpose(1, 2)",
+    "",
+]) + "\n"
+
+XFORMERS_CALLS = [
+    ("xformers.ops.memory_efficient_attention(q, encoder_k, encoder_v, attn_bias=attn_bias, op=None,)",
+     "_avatar_sdpa(q, encoder_k, encoder_v, attn_bias=attn_bias)"),
+    ("xformers.ops.memory_efficient_attention(q, encoder_k, encoder_v, attn_bias=None, op=None,)",
+     "_avatar_sdpa(q, encoder_k, encoder_v)"),
+]
+
 
 def patch_flash_attention(path: Path) -> None:
     """Wan2.2 and InfiniteTalk call flash_attention() directly from their model code and assert
@@ -30,14 +50,33 @@ def patch_flash_attention(path: Path) -> None:
     if not m:
         sys.exit(f"[patch] {path}: flash_attention() signature not found; review the patch")
     end = m.end()
-    # Skip a docstring if the function starts with one.
     rest = src[end:]
-    ds = re.match(r'\s*"""(?:.|\n)*?"""\n', rest)
+    ds = re.match(r'\s*"""(?:.|\n)*?"""\n', rest)  # skip a docstring if the function has one
     if ds:
         end += ds.end()
     src = src[:end] + FALLBACK + src[end:]
     path.write_text(src, encoding="utf-8")
     print(f"[patch] {path}: flash_attention() falls back to SDPA")
+
+
+def replace_xformers_attention(path: Path) -> None:
+    """InfiniteTalk's audio cross-attention calls xformers.ops.memory_efficient_attention, which
+    dispatches to a Hopper flash kernel that crashes on Blackwell GPUs. Use PyTorch attention."""
+    src = path.read_text(encoding="utf-8")
+    if "_avatar_sdpa" in src:
+        print(f"[patch] {path}: already patched")
+        return
+    for old, _new in XFORMERS_CALLS:
+        if old not in src:
+            sys.exit(f"[patch] {path}: expected call not found: {old}")
+    for old, new in XFORMERS_CALLS:
+        src = src.replace(old, new)
+    anchor = "import xformers.ops\n"
+    if anchor not in src:
+        sys.exit(f"[patch] {path}: 'import xformers.ops' not found")
+    src = src.replace(anchor, anchor + SDPA_HELPER, 1)
+    path.write_text(src, encoding="utf-8")
+    print(f"[patch] {path}: xformers attention replaced by PyTorch attention")
 
 
 def drop_argspec_import(path: Path) -> None:
@@ -54,4 +93,5 @@ def drop_argspec_import(path: Path) -> None:
 if __name__ == "__main__":
     patch_flash_attention(Path("/models/Wan2.2/wan/modules/attention.py"))
     patch_flash_attention(Path("/models/InfiniteTalk/wan/modules/attention.py"))
+    replace_xformers_attention(Path("/models/InfiniteTalk/wan/modules/attention.py"))
     drop_argspec_import(Path("/models/InfiniteTalk/wan/multitalk.py"))

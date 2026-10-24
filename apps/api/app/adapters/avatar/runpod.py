@@ -103,7 +103,7 @@ class RunPodAvatarEngine(AvatarEngine):
         if req.extra.get("style_key"):
             payload["style_url"] = storage.download_url(req.extra["style_key"], expires_in=3600)
         out_key = f"{scratch}/raw.mp4"
-        payload["upload_url"] = storage.presign_upload(out_key, "video/mp4").url
+        payload["upload_url"] = storage.presign_upload(out_key, "video/mp4", expires_in=7200).url
 
         output = self._submit_and_wait(payload, progress)
         local = out_dir / "raw.mp4"
@@ -119,7 +119,7 @@ class RunPodAvatarEngine(AvatarEngine):
         out_key = f"{scratch}/style.safetensors"
         payload = {
             "task": "train_style", "footage_urls": urls, "steps": 1500, "rank": 32,
-            "upload_url": storage.presign_upload(out_key, "application/octet-stream").url,
+            "upload_url": storage.presign_upload(out_key, "application/octet-stream", expires_in=7200).url,
             "expected_seconds": 5400,
         }
         self._submit_and_wait(payload, progress)
@@ -134,7 +134,7 @@ class RunPodAvatarEngine(AvatarEngine):
         out_key = f"{scratch}/out.mp4"
         payload = {
             "task": "finish", "video_url": in_url, "width": width, "height": height, "fps": fps,
-            "upload_url": storage.presign_upload(out_key, "video/mp4").url, "expected_seconds": 240,
+            "upload_url": storage.presign_upload(out_key, "video/mp4", expires_in=7200).url, "expected_seconds": 240,
         }
         self._submit_and_wait(payload, progress)
         local = out_dir / "finished.mp4"

@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     runpod_api_key: str | None = None
     runpod_endpoint_id: str | None = None
     runpod_poll_seconds: float = 5.0
-    runpod_timeout_seconds: int = 1800
+    runpod_timeout_seconds: int = 5400  # long renders without flash-attn take 30+ min
     default_engine_photo: str = Field(
         default="wan_s2v", description="Stage 0 picks wan_s2v or infinitetalk"
     )
