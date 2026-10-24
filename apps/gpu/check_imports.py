@@ -18,9 +18,22 @@ torch.cuda.current_device = lambda: 0  # type: ignore[assignment]
 torch.cuda.is_available = lambda: True  # type: ignore[assignment]
 torch.cuda.device_count = lambda: 1  # type: ignore[assignment]
 torch.cuda.get_device_capability = lambda *a, **k: (9, 0)  # type: ignore[assignment]
-torch.cuda.get_device_properties = lambda *a, **k: type(  # type: ignore[assignment]
-    "P", (), {"major": 9, "minor": 0, "total_memory": 96 << 30, "name": "build-check"}
-)()
+
+
+class _FakeDevice:
+    """Answers any device property a library reads at import time."""
+
+    major, minor, total_memory, name = 9, 0, 96 << 30, "build-check"
+    gcnArchName, multi_processor_count, is_integrated, is_multi_gpu_board = "", 128, False, False
+
+    def __getattr__(self, item: str):
+        return "" if item.lower().endswith("name") else 0
+
+
+torch.cuda.get_device_properties = lambda *a, **k: _FakeDevice()  # type: ignore[assignment]
+torch.cuda.get_device_name = lambda *a, **k: "build-check"  # type: ignore[assignment]
+torch.cuda.mem_get_info = lambda *a, **k: (96 << 30, 96 << 30)  # type: ignore[assignment]
+torch.cuda.synchronize = lambda *a, **k: None  # type: ignore[assignment]
 
 CHECKS = [
     ("/models/InfiniteTalk", "wan"),
