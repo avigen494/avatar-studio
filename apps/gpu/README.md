@@ -14,15 +14,15 @@ One image, four render engines, the finish pass, style training, face match and 
 | task `quality_check` | InsightFace buffalo_l | Output face vs reference, per frame (consistency gate) |
 | task `warmup` | downloads weights | First start on a new volume |
 
-The image holds code and Python dependencies only. **Model weights (about 75 GB) live on a RunPod network volume** and are downloaded once, on the first start, by `handler.ensure_weights()`. Later starts find them in place.
+The image holds code and Python dependencies only. **Model weights (about 152 GB) live on a RunPod network volume** and are downloaded once, on the first start, by `handler.ensure_weights()`. Later starts find them in place.
 
 ## Setting up RunPod, step by step
 
-**1. Account and credit.** Sign up at runpod.io. Billing → add credit. The whole Stage 0 bake-off costs roughly $15 to $30 on an L40S; the network volume costs about $0.07 per GB per month (a 150 GB volume is about $10 a month).
+**1. Account and credit.** Sign up at runpod.io. Billing → add credit. The whole Stage 0 bake-off costs roughly $15 to $30 on an L40S; the network volume costs about $0.07 per GB per month (a 250 GB volume is about $17 a month).
 
 **2. API key.** Settings → API Keys → Create API Key → permission **Read & Write**. Copy it; it is shown once.
 
-**3. Network volume for the weights.** Storage → Network Volumes → **New Network Volume**: name `avatar-weights`, size **150 GB**, data center: pick one that lists **L40S** (or H100) as available, and note which one. The endpoint must be created in the same data center.
+**3. Network volume for the weights.** Storage → Network Volumes → **New Network Volume**: name `avatar-weights`, size **250 GB**, data center: pick one that lists **L40S** (or H100) as available, and note which one. The endpoint must be created in the same data center.
 
 **4. The image.** Two ways:
 

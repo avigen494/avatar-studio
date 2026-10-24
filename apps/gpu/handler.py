@@ -48,14 +48,18 @@ GFPGAN_WEIGHTS = Path(os.environ.get("GFPGAN_WEIGHTS", str(WEIGHTS_ROOT / "GFPGA
 RIFE_DIR = Path(os.environ.get("RIFE_DIR", "/models/Practical-RIFE"))
 DIFFSYNTH_DIR = Path(os.environ.get("DIFFSYNTH_DIR", "/models/DiffSynth-Studio"))
 
-# What ensure_weights() fetches: (Hugging Face repo, folder under WEIGHTS_ROOT, file that proves it is complete)
+# What ensure_weights() fetches: (Hugging Face repo, folder under WEIGHTS_ROOT, file that proves it is
+# complete, allow patterns). The patterns matter: the full repos are 311 GB, the files we use are ~152 GB.
 WEIGHT_SETS = [
-    ("Wan-AI/Wan2.1-I2V-14B-480P", "weights/Wan2.1-I2V-14B-480P", "config.json"),
-    ("TencentGameMate/chinese-wav2vec2-base", "weights/chinese-wav2vec2-base", "config.json"),
-    ("MeiGen-AI/InfiniteTalk", "weights/InfiniteTalk", "single/infinitetalk.safetensors"),
-    ("Wan-AI/Wan2.2-S2V-14B", "Wan2.2-S2V-14B", "config.json"),
-    ("ByteDance/LatentSync-1.6", "LatentSync-1.6", "latentsync_unet.pt"),
+    ("Wan-AI/Wan2.1-I2V-14B-480P", "weights/Wan2.1-I2V-14B-480P", "config.json", ["*.safetensors", "*.pth", "*.json", "*.txt", "*.model", "google/*", "xlm-roberta-large/*"]),
+    ("TencentGameMate/chinese-wav2vec2-base", "weights/chinese-wav2vec2-base", "config.json", ["*.json", "pytorch_model.bin"]),
+    ("MeiGen-AI/InfiniteTalk", "weights/InfiniteTalk", "single/infinitetalk.safetensors", ["single/*"]),
+    ("Wan-AI/Wan2.2-S2V-14B", "Wan2.2-S2V-14B", "config.json", ["*.safetensors", "*.pth", "*.json", "*.txt", "*.model", "google/*", "wav2vec2-large-xlsr-53-english/*"]),
+    ("ByteDance/LatentSync-1.6", "LatentSync-1.6", "latentsync_unet.pt", None),
 ]
+# Folders an earlier, unfiltered download may have left behind; they are not used and waste the volume.
+UNUSED_WEIGHT_DIRS = ["weights/InfiniteTalk/quant_models", "weights/InfiniteTalk/multi", "weights/InfiniteTalk/comfyui",
+                      "weights/Wan2.1-I2V-14B-480P/assets", "weights/Wan2.1-I2V-14B-480P/examples", "Wan2.2-S2V-14B/assets"]
 GFPGAN_URL = "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.4/GFPGANv1.4.pth"
 _WEIGHTS_READY = False
 
@@ -70,7 +74,21 @@ def ensure_weights() -> None:
     global _WEIGHTS_READY
     if _WEIGHTS_READY:
         return
+    # Never download onto the container disk: the weights are ~75 GB and the disk is 30 GB.
+    # The network volume must be mounted at the folder WEIGHTS_ROOT lives in.
+    volume = WEIGHTS_ROOT.parent
+    if str(volume).startswith("/runpod-volume") and not os.path.ismount(str(volume)):
+        raise RuntimeError(
+            f"Network volume is not mounted at {volume}. Attach the volume to the endpoint and set the "
+            "template's volume mount path to /runpod-volume, then run the warm-up again."
+        )
     WEIGHTS_ROOT.mkdir(parents=True, exist_ok=True)
+    for rel in UNUSED_WEIGHT_DIRS:
+        if (WEIGHTS_ROOT / rel).exists():
+            print(f"[weights] removing unused {rel}", flush=True)
+            shutil.rmtree(WEIGHTS_ROOT / rel, ignore_errors=True)
+    free_gb = shutil.disk_usage(WEIGHTS_ROOT).free / 1e9
+    print(f"[weights] root {WEIGHTS_ROOT} free {free_gb:.0f} GB (full set needs ~152 GB)", flush=True)
     lock = WEIGHTS_ROOT / ".download.lock"
     waited = 0
     while lock.exists() and waited < 3600:  # another worker is downloading
@@ -79,16 +97,17 @@ def ensure_weights() -> None:
             break
         time.sleep(15)
         waited += 15
-    missing = [(repo, sub, marker) for repo, sub, marker in WEIGHT_SETS if not (WEIGHTS_ROOT / sub / marker).exists()]
+    missing = [w for w in WEIGHT_SETS if not (WEIGHTS_ROOT / w[1] / w[2]).exists()]
     gfpgan_file = GFPGAN_WEIGHTS / "GFPGANv1.4.pth"
     if missing or not gfpgan_file.exists():
         lock.write_text(str(os.getpid()))
         try:
             from huggingface_hub import snapshot_download
 
-            for repo, sub, _marker in missing:
-                print(f"[weights] downloading {repo} -> {WEIGHTS_ROOT / sub}", flush=True)
-                snapshot_download(repo_id=repo, local_dir=str(WEIGHTS_ROOT / sub), token=os.environ.get("HF_TOKEN") or None)
+            for repo, sub, _marker, allow in missing:
+                print(f"[weights] downloading {repo} -> {WEIGHTS_ROOT / sub} (patterns {allow})", flush=True)
+                snapshot_download(repo_id=repo, local_dir=str(WEIGHTS_ROOT / sub), allow_patterns=allow,
+                                  token=os.environ.get("HF_TOKEN") or None)
             if not gfpgan_file.exists():
                 GFPGAN_WEIGHTS.mkdir(parents=True, exist_ok=True)
                 download(GFPGAN_URL, gfpgan_file)
