@@ -470,7 +470,22 @@ if __name__ == "__main__":
         import runpod
 
         print(f"[start] avatar-gpu {IMAGE_TAG}; weights root {WEIGHTS_ROOT}", flush=True)
-        runpod.serverless.start({"handler": handler})
+        entry = handler
+        # Developer switch: load the handler from a URL instead of the image, so a worker fix
+        # does not need a 10-minute image build. Unset in production (no env var = no effect).
+        override = os.environ.get("HANDLER_OVERRIDE_URL")
+        if override:
+            import importlib.util
+
+            live = Path("/app/handler_live.py")
+            download(override, live)
+            spec = importlib.util.spec_from_file_location("handler_live", str(live))
+            mod = importlib.util.module_from_spec(spec)
+            assert spec.loader is not None
+            spec.loader.exec_module(mod)
+            entry = mod.handler
+            print("[start] handler loaded from HANDLER_OVERRIDE_URL (developer mode)", flush=True)
+        runpod.serverless.start({"handler": entry})
     except BaseException:  # noqa: BLE001
         traceback.print_exc()
         print("[start] worker failed to start; see traceback above", flush=True)
