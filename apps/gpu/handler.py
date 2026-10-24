@@ -418,7 +418,7 @@ def handler(event: dict) -> dict:
         audio = trim_audio(audio_full, work / "voice_trim.wav", job.get("max_seconds"))
         if job.get("style_url"):
             download(job["style_url"], work / "style.safetensors")
-        image = download(job["image_url"], work / "look" + Path(job["image_url"].split("?")[0]).suffix) if job.get("image_url") else None
+        image = download(job["image_url"], work / ("look" + (Path(job["image_url"].split("?")[0]).suffix or ".jpg"))) if job.get("image_url") else None
         video = download(job["video_url"], work / "reference.mp4") if job.get("video_url") else None
 
         if engine == "wan_s2v":

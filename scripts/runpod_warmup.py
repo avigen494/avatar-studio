@@ -66,7 +66,12 @@ with httpx.Client(timeout=60) as c:
                 started = time.time()  # remind again in 20 minutes
         sys.exit(0)
 
-    r = c.post(f"{base}/run", headers=headers, json={"input": {"task": "warmup"}})
+    for attempt in range(10):
+        r = c.post(f"{base}/run", headers=headers, json={"input": {"task": "warmup"}})
+        if r.status_code != 409:  # 409 = the endpoint is still applying a change; try again shortly
+            break
+        print("endpoint is busy applying a change; retrying in 30 s", flush=True)
+        time.sleep(30)
     r.raise_for_status()
     job_id = r.json()["id"]
     print(f"warmup job {job_id} submitted; waiting for a worker to start and download the weights...", flush=True)

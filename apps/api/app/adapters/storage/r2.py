@@ -25,6 +25,25 @@ class R2Storage(Storage):
             config=Config(signature_version="s3v4", s3={"addressing_style": "path"}),
         )
 
+    def ensure_cors(self) -> list[str]:
+        """
+        Browsers upload straight to the bucket with presigned PUTs, which R2 refuses
+        until the bucket's CORS rule names the web app's origin. Called by the
+        Connections test so a freshly connected bucket works without manual setup.
+        """
+        origins = sorted({settings.web_base_url.rstrip("/"), *settings.cors_origin_list})
+        self.client.put_bucket_cors(
+            Bucket=self.bucket,
+            CORSConfiguration={"CORSRules": [{
+                "AllowedOrigins": origins,
+                "AllowedMethods": ["GET", "PUT", "HEAD"],
+                "AllowedHeaders": ["*"],
+                "ExposeHeaders": ["ETag"],
+                "MaxAgeSeconds": 3600,
+            }]},
+        )
+        return origins
+
     def put_file(self, key: str, path: Path, content_type: str | None = None) -> None:
         extra = {"ContentType": content_type} if content_type else {}
         self.client.upload_file(str(path), self.bucket, key, ExtraArgs=extra)

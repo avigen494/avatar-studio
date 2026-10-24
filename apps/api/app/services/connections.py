@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from app.config import settings
 from app.services.runtime_config import KEYS, cfg
 
 
@@ -231,7 +232,12 @@ def _t_r2() -> tuple[bool, str]:
 
     s = R2Storage()
     s.client.head_bucket(Bucket=s.bucket)
-    return True, f"Bucket {s.bucket} is reachable."
+    try:
+        origins = s.ensure_cors()
+    except Exception:  # noqa: BLE001 - an Object Read & Write token cannot change bucket settings
+        return True, (f"Bucket {s.bucket} is reachable. This token cannot set the bucket's CORS rule, so make sure the "
+                      f"bucket's CORS policy in the Cloudflare dashboard allows PUT from {settings.web_base_url}.")
+    return True, f"Bucket {s.bucket} is reachable; browser uploads allowed from {', '.join(origins)}."
 
 
 def _t_clerk() -> tuple[bool, str]:
