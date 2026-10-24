@@ -39,6 +39,9 @@ RUN pip install insightface onnxruntime-gpu opencv-python-headless "huggingface_
 RUN pip install "diffusers==0.33.1" "transformers==4.51.3" "tokenizers>=0.21,<0.22" "accelerate>=1.1.1,<2"     "huggingface_hub>=0.30,<1" "numpy==1.26.4" "peft>=0.14" "xfuser>=0.4.1"
 # basicsr (used by GFPGAN) imports a torchvision module that was removed in torchvision 0.17.
 RUN f=$(python -c "import importlib.util; print(importlib.util.find_spec('basicsr').submodule_search_locations[0])")/data/degradations.py     && sed -i "s/from torchvision.transforms.functional_tensor import rgb_to_grayscale/from torchvision.transforms.functional import rgb_to_grayscale/" "$f"
+# flash-attn is optional for every engine (they fall back to PyTorch attention) and the version
+# pip finds is rejected by diffusers' version check, so make sure it is absent.
+RUN pip uninstall -y flash-attn flash_attn || true
 # Some model repos pin an older torch in their requirements; put the CUDA 12.8 build back last so
 # the image keeps working on Blackwell GPUs.
 RUN pip install --force-reinstall --no-deps torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128 \
