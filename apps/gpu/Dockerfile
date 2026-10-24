@@ -65,9 +65,10 @@ ENV IMAGE_TAG=$IMAGE_TAG
 # Works whether the build context is the repo root (RunPod GitHub builds) or apps/gpu (local builds).
 WORKDIR /app
 COPY . /src
-RUN d=/src; [ -f /src/handler.py ] || d=/src/apps/gpu; cp $d/handler.py /app/handler.py; cp $d/check_imports.py /app/check_imports.py; rm -rf /src
-# InfiniteTalk imports inspect.ArgSpec, which Python 3.11 removed; the name is never used.
-RUN sed -i '/^from inspect import ArgSpec/d' /models/InfiniteTalk/wan/multitalk.py
+RUN d=/src; [ -f /src/handler.py ] || d=/src/apps/gpu; cp $d/handler.py /app/handler.py; cp $d/check_imports.py /app/check_imports.py; cp $d/patch_repos.py /app/patch_repos.py; rm -rf /src
+# Small, explained patches to the cloned repos (see patch_repos.py): flash_attention() falls back
+# to PyTorch attention when flash-attn is absent; a Python 3.11 import fix for InfiniteTalk.
+RUN python /app/patch_repos.py
 # Fail the build, not the first worker, if the handler cannot even be imported.
 RUN python -c "import runpod, requests, torch; print('runpod', runpod.__version__, 'torch', torch.__version__)" \
     && python -c "import importlib.util; s=importlib.util.spec_from_file_location('handler','/app/handler.py'); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print('handler imports ok')"     && python -c "import diffusers.pipelines.pipeline_utils, transformers, accelerate; from accelerate.utils.memory import clear_device_cache; print('diffusers', diffusers.__version__, 'transformers', transformers.__version__, 'accelerate', accelerate.__version__)"     && python /app/check_imports.py
