@@ -43,7 +43,9 @@ RUN f=$(python -c "import importlib.util; print(importlib.util.find_spec('basics
 # the image keeps working on Blackwell GPUs.
 RUN pip install --force-reinstall --no-deps torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128 \
     && pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128 \
-    && python -c "import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda)"
+    && pip install xformers==0.0.32.post2 --index-url https://download.pytorch.org/whl/cu128     && python -c "import torch, xformers; print('torch', torch.__version__, 'cuda', torch.version.cuda, 'xformers', xformers.__version__)"
+# mediapipe (LatentSync) ships protobuf 3 generated code; the pure-Python protobuf runtime accepts it.
+ENV PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 
 # Weights root on the network volume. Override WEIGHTS_ROOT to keep them elsewhere.
 ENV WEIGHTS_ROOT=/runpod-volume/models
