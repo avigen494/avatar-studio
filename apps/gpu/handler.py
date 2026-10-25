@@ -358,7 +358,8 @@ class InfiniteTalkResident:
         video = self.pipe.generate_infinitetalk(
             clip, size_buckget=size, motion_frame=9, frame_num=81, shift=shift, sampling_steps=steps,
             text_guide_scale=text_guide, audio_guide_scale=audio_guide, seed=seed, offload_model=False,
-            max_frames_num=1000, color_correction_strength=1.0, extra_args=extra)
+            max_frames_num=25 * 60 * 30,  # the script's default of 1000 frames would cut videos at 40 s
+            color_correction_strength=1.0, extra_args=extra)
         t2 = time.time()
         save_video_ffmpeg(video, str(out_base), [str(sum_wav)], high_quality_save=False)
         t3 = time.time()
@@ -381,8 +382,12 @@ def run_wan_s2v(job: dict, work: Path, image: Path, audio: Path) -> Path:
     out_dir = work / "wan_out"
     out_dir.mkdir()
     # Wan2.2 S2V generate.py: speech-to-video with a reference image.
-    # Wan2.2 S2V-14B accepts only two sizes; the finish pass scales and crops to the requested frame.
-    size = "704*1024" if job["height"] >= job["width"] else "1024*704"
+    # Wan2.2 S2V-14B accepts a fixed set of sizes; pick the smallest that covers the requested frame
+    # (480p for 720p requests, the economical setting; 704 wide for anything larger). The finish pass
+    # scales and crops to the requested frame.
+    portrait = job["height"] >= job["width"]
+    small = max(job["width"], job["height"]) <= 832
+    size = ("480*832" if small else "704*1024") if portrait else ("832*480" if small else "1024*704")
     sh([PYTHON, WAN_DIR / "generate.py", "--task", "s2v-14B", "--size", size, "--ckpt_dir", WAN_S2V_CKPT,
         "--offload_model", offload_flag(), *([] if offload_flag() == "False" else ["--convert_model_dtype"]),
         "--prompt", job["prompt"], "--image", image,
@@ -407,7 +412,7 @@ def run_infinitetalk(job: dict, work: Path, media_path: Path, audio: Path, v2v: 
            "--infinitetalk_dir", INFINITETALK_WEIGHTS / "InfiniteTalk/single/infinitetalk.safetensors",
            "--input_json", work / "input.json", "--size", size, "--sample_steps", str(steps),
            "--mode", "streaming", "--motion_frame", "9", "--base_seed", str(job.get("seed") or 42),
-           "--offload_model", offload_flag(),
+           "--offload_model", offload_flag(), "--max_frame_num", str(25 * 60 * 30),
            "--save_file", out_dir / "out"]
     loras: list[str] = []
     scales: list[float] = []
