@@ -216,7 +216,7 @@ def sh(cmd: list[str], cwd: Path | None = None) -> None:
             if len(tail) > 60:
                 tail.pop(0)
     code = proc.wait()
-    name0 = Path(str(cmd[1] if len(cmd) > 1 else cmd[0])).name
+    name0 = str(cmd[2]) if len(cmd) > 2 and str(cmd[1]) == "-m" else Path(str(cmd[1] if len(cmd) > 1 else cmd[0])).name
     prof = {
         "wall_s": round(time.time() - t_start, 1), "segments": segments, "progress_readings": len(steps),
         "s_per_step_median": round(sorted(steps)[len(steps) // 2], 2) if steps else None,
@@ -442,7 +442,13 @@ def run_infinitetalk(job: dict, work: Path, media_path: Path, audio: Path, v2v: 
 def run_latentsync(job: dict, work: Path, video: Path, audio: Path) -> Path:
     _RESIDENT.unload()
     out = work / "latentsync.mp4"
-    sh([PYTHON, LATENTSYNC_DIR / "scripts" / "inference.py",
+    # LatentSync hardcodes checkpoints/whisper/tiny.pt and checkpoints/auxiliary/* relative to its repo
+    # root (its README downloads the HF repo into ./checkpoints). Point that folder at the volume.
+    link = LATENTSYNC_DIR / "checkpoints"
+    if not link.exists():
+        os.symlink(LATENTSYNC_CKPT, link, target_is_directory=True)
+    # Run as a module from the repo root (as the LatentSync README does) so `import latentsync` resolves.
+    sh([PYTHON, "-m", "scripts.inference",
         "--unet_config_path", LATENTSYNC_DIR / "configs/unet/stage2_512.yaml",
         "--inference_ckpt_path", LATENTSYNC_CKPT / "latentsync_unet.pt",
         "--inference_steps", str(job.get("steps", 20)), "--guidance_scale", "1.5", "--seed", str(job.get("seed") or 1247),
