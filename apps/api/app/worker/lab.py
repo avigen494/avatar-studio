@@ -73,6 +73,12 @@ def run_engine_trial(db: Session, job: Job) -> None:
         wall = time.time() - started
         trial.seed = seed
         trial.engine_version = result.engine_version
+        if result.profile:
+            # Keep the GPU's own timing breakdown with the trial so speed work is measured, not guessed.
+            import json as _json
+
+            summary = _json.dumps(result.profile, separators=(",", ":"))[:1500]
+            trial.notes = ((trial.notes or "").rstrip() + "\n\nGPU timing: " + summary).strip()
         ref_for_check = reference_path or look_path
         if ref_for_check is not None:
             from app.adapters.quality import get_quality_checker

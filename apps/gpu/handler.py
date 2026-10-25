@@ -27,6 +27,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import traceback
@@ -273,8 +274,110 @@ def newest_mp4(folder: Path) -> Path:
     return files[-1]
 
 
+# --- resident InfiniteTalk -----------------------------------------------------
+class InfiniteTalkResident:
+    """
+    Keeps InfiniteTalk (DiT, T5, VAE, CLIP, wav2vec) loaded in this worker process between jobs.
+    Loading takes 3-4 minutes from the network volume; a RunPod worker stays alive between jobs
+    until its idle timeout, so every job after the first skips that. The pipeline is rebuilt only
+    when the LoRA set changes, and unloaded before another engine needs the GPU.
+    Mirrors the single-speaker, local-audio path of generate_infinitetalk.py.
+    """
+
+    def __init__(self) -> None:
+        self.pipe = None
+        self.key: tuple | None = None
+        self.fe = None
+        self.enc = None
+
+    def _modules(self):
+        repo = str(INFINITETALK_DIR)
+        if repo not in sys.path:
+            sys.path.insert(0, repo)
+        os.chdir(repo)  # the repo imports its own helpers relative to its root
+        import wan  # noqa: PLC0415
+        from wan.configs import WAN_CONFIGS  # noqa: PLC0415
+        import generate_infinitetalk as gi  # noqa: PLC0415  (audio helpers; nothing runs on import)
+        from wan.utils.multitalk_utils import save_video_ffmpeg  # noqa: PLC0415
+
+        return wan, WAN_CONFIGS, gi, save_video_ffmpeg
+
+    def ensure(self, loras: list[str], scales: list[float]) -> float:
+        key = tuple(zip(loras, scales))
+        if self.pipe is not None and key == self.key:
+            return 0.0
+        self.unload()
+        t0 = time.time()
+        wan, cfgs, gi, _ = self._modules()
+        self.pipe = wan.InfiniteTalkPipeline(
+            config=cfgs["infinitetalk-14B"], checkpoint_dir=str(INFINITETALK_WEIGHTS / "Wan2.1-I2V-14B-480P"),
+            quant_dir=None, device_id=0, rank=0, t5_fsdp=False, dit_fsdp=False, use_usp=False, t5_cpu=False,
+            lora_dir=list(loras) or None, lora_scales=list(scales) or None, quant=None, dit_path=None,
+            infinitetalk_dir=str(INFINITETALK_WEIGHTS / "InfiniteTalk/single/infinitetalk.safetensors"))
+        if self.fe is None:
+            self.fe, self.enc = gi.custom_init("cpu", str(INFINITETALK_WEIGHTS / "chinese-wav2vec2-base"))
+        self.key = key
+        secs = time.time() - t0
+        print(f"[resident] InfiniteTalk loaded in {secs:.0f} s (loras={loras})", flush=True)
+        return secs
+
+    def unload(self) -> None:
+        if self.pipe is None:
+            return
+        import gc  # noqa: PLC0415
+
+        self.pipe, self.key = None, None
+        gc.collect()
+        try:
+            import torch  # noqa: PLC0415
+
+            torch.cuda.empty_cache()
+        except Exception:  # noqa: BLE001
+            pass
+        print("[resident] InfiniteTalk unloaded", flush=True)
+
+    def render(self, *, media: Path, audio: Path, prompt: str, out_base: Path, work: Path, size: str, steps: int,
+               text_guide: float, audio_guide: float, seed: int, shift: float | None) -> Path:
+        import types  # noqa: PLC0415
+
+        import soundfile as sf  # noqa: PLC0415
+        import torch  # noqa: PLC0415
+
+        _wan, _cfgs, gi, save_video_ffmpeg = self._modules()
+        t0 = time.time()
+        speech = gi.audio_prepare_single(str(audio))
+        emb = gi.get_embedding(speech, self.fe, self.enc)
+        emb_path, sum_wav = work / "1.pt", work / "sum.wav"
+        torch.save(emb, emb_path)
+        sf.write(str(sum_wav), speech, 16000)
+        t1 = time.time()
+        clip = {"prompt": prompt, "cond_video": str(media), "cond_audio": {"person1": str(emb_path)},
+                "video_audio": str(sum_wav)}
+        extra = types.SimpleNamespace(use_teacache=False, teacache_thresh=0.2, size=size, use_apg=False,
+                                      apg_momentum=-0.75, apg_norm_threshold=55, mode="streaming")
+        video = self.pipe.generate_infinitetalk(
+            clip, size_buckget=size, motion_frame=9, frame_num=81, shift=shift, sampling_steps=steps,
+            text_guide_scale=text_guide, audio_guide_scale=audio_guide, seed=seed, offload_model=False,
+            max_frames_num=1000, color_correction_strength=1.0, extra_args=extra)
+        t2 = time.time()
+        save_video_ffmpeg(video, str(out_base), [str(sum_wav)], high_quality_save=False)
+        t3 = time.time()
+        LAST_PROFILE["infinitetalk_resident"] = {"audio_s": round(t1 - t0, 1), "generate_s": round(t2 - t1, 1),
+                                                 "save_s": round(t3 - t2, 1), "steps": steps, "size": size}
+        print(f"[profile] infinitetalk_resident: {LAST_PROFILE['infinitetalk_resident']}", flush=True)
+        return Path(str(out_base) + ".mp4")
+
+
+_RESIDENT = InfiniteTalkResident()
+
+
+def resident_enabled() -> bool:
+    return os.environ.get("INFINITETALK_RESIDENT", "1") == "1"
+
+
 # --- engines -------------------------------------------------------------------
 def run_wan_s2v(job: dict, work: Path, image: Path, audio: Path) -> Path:
+    _RESIDENT.unload()  # Wan2.2 needs the whole card
     out_dir = work / "wan_out"
     out_dir.mkdir()
     # Wan2.2 S2V generate.py: speech-to-video with a reference image.
@@ -307,24 +410,37 @@ def run_infinitetalk(job: dict, work: Path, media_path: Path, audio: Path, v2v: 
            "--offload_model", offload_flag(),
            "--save_file", out_dir / "out"]
     loras: list[str] = []
-    scales: list[str] = []
+    scales: list[float] = []
+    text_guide, audio_guide, shift = 5.0, 4.0, None
     if steps <= 8:
         # Fast mode (InfiniteTalk README, "Run with FusioniX or Lightx2v"): the distilled LoRA needs only
-        # 4-8 steps, with text guide 1.0 and audio guide 2.0 instead of the defaults 5 and 4.
+        # 4-8 steps, with text guide 1.0, audio guide 2.0 and sampling shift 2 instead of 5 / 4 / 5.
         loras.append(str(WEIGHTS_ROOT / INFINITETALK_DISTILL_LORA))
-        scales.append("1.0")
-        cmd += ["--sample_text_guide_scale", "1.0", "--sample_audio_guide_scale", "2.0"]
+        scales.append(1.0)
+        text_guide, audio_guide, shift = 1.0, 2.0, 2.0
         print(f"[infinitetalk] fast mode: {steps} steps with the distilled LoRA", flush=True)
     if job.get("style_url"):
         loras.append(str(work / "style.safetensors"))
-        scales.append("1.0")
+        scales.append(1.0)
+
+    if resident_enabled():
+        load_s = _RESIDENT.ensure(loras, scales)
+        LAST_PROFILE["infinitetalk_load"] = {"load_s": round(load_s, 1), "was_resident": load_s == 0.0}
+        return _RESIDENT.render(media=media_path, audio=audio, prompt=job["prompt"], out_base=out_dir / "out", work=work,
+                                size=size, steps=steps, text_guide=text_guide, audio_guide=audio_guide,
+                                seed=int(job.get("seed") or 42), shift=shift)
+
+    cmd += ["--sample_text_guide_scale", str(text_guide), "--sample_audio_guide_scale", str(audio_guide)]
+    if shift is not None:
+        cmd += ["--sample_shift", str(shift)]
     if loras:
-        cmd += ["--lora_dir", *loras, "--lora_scale", *scales]
+        cmd += ["--lora_dir", *loras, "--lora_scale", *[str(s) for s in scales]]
     sh(cmd, cwd=INFINITETALK_DIR)
     return newest_mp4(out_dir)
 
 
 def run_latentsync(job: dict, work: Path, video: Path, audio: Path) -> Path:
+    _RESIDENT.unload()
     out = work / "latentsync.mp4"
     sh([PYTHON, LATENTSYNC_DIR / "scripts" / "inference.py",
         "--unet_config_path", LATENTSYNC_DIR / "configs/unet/stage2_512.yaml",

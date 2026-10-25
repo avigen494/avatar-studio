@@ -110,6 +110,7 @@ class RunPodAvatarEngine(AvatarEngine):
         storage.get_to_file(out_key, local)
         res = RenderResult(video_path=local, engine=req.engine, gpu_seconds=float(output.get("gpu_seconds") or 0))
         res.engine_version = output.get("image_tag")
+        res.profile = output.get("profile") if isinstance(output.get("profile"), dict) else None
         return res
 
     def train_style(self, footage: list[Path], out_dir: Path, progress: ProgressFn, extra: dict | None = None) -> Path:

@@ -41,6 +41,7 @@ class RenderResult:
     gpu_seconds: float = 0.0
     cost_inr: float = 0.0
     engine_version: str | None = None  # image tag / model pin the GPU reported
+    profile: dict | None = None  # per-stage timings the GPU worker reported (load, steps, save)
 
 
 class AvatarEngine(ABC):
