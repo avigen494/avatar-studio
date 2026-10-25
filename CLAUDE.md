@@ -96,6 +96,15 @@ Service keys are read through `services/runtime_config.cfg("...")`, never from `
 - RunPod API keys can be restricted to one endpoint (403 on others); the GPU picker's "Out of capacity" per data centre is the usual reason a queued job never starts; the volume ties the endpoint to its data centre.
 - A browser cannot upload to R2 until the bucket has a CORS rule for the web origin. The Connections test sets it when the token allows (Admin Read & Write); an Object Read & Write token cannot, so the rule is added in the Cloudflare dashboard.
 
+## Speed and cost of the GPU engines (measured 2026-10-24/25 on an H100 SXM, serverless $3.99/h)
+
+- InfiniteTalk 480p: 4-step distilled recipe (lightx2v I2V 480p LoRA, text guide 1.0, audio guide 2.0, shift 2) = 11.7 s/step; 20 steps = 27 s/step. Model load from the volume ~210 s per worker start, so `InfiniteTalkResident` keeps it loaded between jobs (saves 44% on back-to-back clips). fp8 (`--quant`) is a memory saver that disables LoRA: not a speed lever.
+- The 4-step recipe DRIFTS on one continuous take (clean to ~25 s, face broken by 45 s). Long scripts are cut at pauses into ~20 s pieces (`split_audio_at_pauses`), each rendered fresh from the photo, then joined (`concat_videos`). Expect a pose reset at each cut.
+- Wan2.2 S2V: 26.7 s/step at 704x1024; 480x832 at 12 steps gives a stable 60 s take for ~28 GPU min (~INR 160/min). No official distilled version.
+- LatentSync (real footage): run as `python -m scripts.inference` from the repo root with `checkpoints/` linked to the volume; ~250 GPU s per 16 s on a cold worker (96 s set-up).
+- Cheaper cards do not cut cost per video: serverless price scales with speed. Photo mode floors around INR 100-150/min with these 14B models; real-footage mode is the economical path.
+- RunPod refuses work with "402 Insufficient Balance" below a reserve; a dropped local connection must not fail a render (the adapter now rides out ~10 min of poll errors). A job that completes after the app gave up leaves `<scratch>/raw.mp4` in storage and can be salvaged.
+
 ## Lessons
 
 - Browser checks on this box run with puppeteer-core against the installed Chrome (no Playwright install). Scripts live in the session scratchpad, not the repo.
