@@ -61,11 +61,26 @@ class RunPodAvatarEngine(AvatarEngine):
             r.raise_for_status()
             job_id = r.json()["id"]
             started = time.time()
+            poll_failures = 0
+            pct = 0
             while True:
                 time.sleep(settings.runpod_poll_seconds)
-                s = client.get(f"{self.base}/status/{job_id}", headers=self.headers)
-                s.raise_for_status()
-                data = s.json()
+                try:
+                    s = client.get(f"{self.base}/status/{job_id}", headers=self.headers)
+                    if s.status_code >= 500:
+                        raise httpx.HTTPStatusError("RunPod status unavailable", request=s.request, response=s)
+                    s.raise_for_status()
+                    data = s.json()
+                    poll_failures = 0
+                except (httpx.TransportError, httpx.HTTPStatusError, ValueError) as e:
+                    # A dropped connection on this side must not throw away a render that is still running
+                    # on the GPU. Keep polling for up to ~10 minutes before giving up.
+                    poll_failures += 1
+                    if poll_failures > 40:
+                        raise RunPodError(f"Lost contact with the GPU service for too long ({e}).") from e
+                    progress(pct, "Waiting for the GPU service to answer")
+                    time.sleep(10)
+                    continue
                 status = data.get("status")
                 if status == "COMPLETED":
                     return data.get("output") or {}

@@ -274,6 +274,70 @@ def newest_mp4(folder: Path) -> Path:
     return files[-1]
 
 
+# --- long scripts: segments at pauses ------------------------------------------
+def audio_duration_s(path: Path) -> float:
+    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                         capture_output=True, text=True, timeout=60).stdout.strip()
+    return float(out or 0)
+
+
+def split_audio_at_pauses(audio: Path, work: Path, target_s: float = 20.0, max_s: float = 24.0) -> list[Path]:
+    """
+    Cut the voice track into pieces of about `target_s`, cutting inside silences so no word is split.
+    Streaming video engines drift on long continuous takes (the 4-step InfiniteTalk recipe visibly after
+    ~30 s), so each piece is rendered fresh from the photo and the pieces are joined afterwards.
+    """
+    total = audio_duration_s(audio)
+    if total <= max_s:
+        return [audio]
+    probe = subprocess.run(["ffmpeg", "-i", str(audio), "-af", "silencedetect=noise=-35dB:d=0.25", "-f", "null", "-"],
+                           capture_output=True, text=True, timeout=120).stderr
+    import re as _re
+
+    starts = [float(m) for m in _re.findall(r"silence_start: ([\d.]+)", probe)]
+    ends = [float(m) for m in _re.findall(r"silence_end: ([\d.]+)", probe)]
+    pauses = sorted((s + e) / 2 for s, e in zip(starts, ends) if e > s)
+    cuts: list[float] = []
+    seg_start = 0.0
+    for p in pauses:
+        if p - seg_start >= target_s:
+            cuts.append(p)
+            seg_start = p
+        elif p - seg_start > max_s:  # no pause in time: cut at the previous pause anyway
+            break
+    # Force a cut if a stretch still exceeds max_s (continuous speech without pauses).
+    bounds = [0.0, *cuts, total]
+    forced: list[float] = [0.0]
+    for a, b in zip(bounds, bounds[1:]):
+        while b - forced[-1] > max_s:
+            forced.append(forced[-1] + target_s)
+        forced.append(b)
+    bounds = sorted(set(round(x, 3) for x in forced))
+    pieces: list[Path] = []
+    for i, (a, b) in enumerate(zip(bounds, bounds[1:])):
+        if b - a < 0.5:
+            continue
+        piece = work / f"voice_seg{i:02d}.wav"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{a:.3f}", "-to", f"{b:.3f}", "-i", str(audio),
+                        "-c:a", "pcm_s16le", str(piece)], check=True, timeout=120)
+        pieces.append(piece)
+    print(f"[segments] {total:.1f} s of speech -> {len(pieces)} pieces at {[round(b, 1) for b in bounds]}", flush=True)
+    return pieces
+
+
+def concat_videos(parts: list[Path], out: Path) -> Path:
+    """Join rendered pieces (same size and fps) into one file, re-encoding so the cuts are clean."""
+    if len(parts) == 1:
+        shutil.move(str(parts[0]), str(out))
+        return out
+    listing = out.with_suffix(".txt")
+    listing.write_text("".join(f"file '{p.as_posix()}'\n" for p in parts))
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(listing),
+                    "-c:v", "libx264", "-preset", "medium", "-crf", "17", "-pix_fmt", "yuv420p",
+                    "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)], check=True, timeout=1800)
+    return out
+
+
 # --- resident InfiniteTalk -----------------------------------------------------
 class InfiniteTalkResident:
     """
@@ -431,9 +495,17 @@ def run_infinitetalk(job: dict, work: Path, media_path: Path, audio: Path, v2v: 
     if resident_enabled():
         load_s = _RESIDENT.ensure(loras, scales)
         LAST_PROFILE["infinitetalk_load"] = {"load_s": round(load_s, 1), "was_resident": load_s == 0.0}
-        return _RESIDENT.render(media=media_path, audio=audio, prompt=job["prompt"], out_base=out_dir / "out", work=work,
-                                size=size, steps=steps, text_guide=text_guide, audio_guide=audio_guide,
-                                seed=int(job.get("seed") or 42), shift=shift)
+        seed = int(job.get("seed") or 42)
+        pieces = split_audio_at_pauses(audio, work) if not v2v else [audio]
+        parts: list[Path] = []
+        for i, piece in enumerate(pieces):
+            seg_work = work / f"seg{i:02d}"
+            seg_work.mkdir(exist_ok=True)
+            parts.append(_RESIDENT.render(media=media_path, audio=piece, prompt=job["prompt"], out_base=seg_work / "out",
+                                          work=seg_work, size=size, steps=steps, text_guide=text_guide,
+                                          audio_guide=audio_guide, seed=seed, shift=shift))
+        LAST_PROFILE["infinitetalk_segments"] = len(parts)
+        return concat_videos(parts, out_dir / "out.mp4")
 
     cmd += ["--sample_text_guide_scale", str(text_guide), "--sample_audio_guide_scale", str(audio_guide)]
     if shift is not None:
