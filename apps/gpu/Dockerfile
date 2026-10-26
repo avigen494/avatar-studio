@@ -66,7 +66,9 @@ RUN python -m venv /opt/longcat && /opt/longcat/bin/pip install --upgrade pip wh
            && /opt/longcat/bin/pip install "https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1%2Bcu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl" \
            && /opt/longcat/bin/python -c "import flash_attn" ) ) \
     && /opt/longcat/bin/pip install -r /models/LongCat-Video/requirements.txt \
-    && /opt/longcat/bin/pip install -r /models/LongCat-Video/requirements_avatar.txt "huggingface_hub[cli]" \
+    && apt-get update && apt-get install -y --no-install-recommends libsndfile1 && rm -rf /var/lib/apt/lists/* \
+    && grep -v -E '^(libsndfile1|tritonserverclient)' /models/LongCat-Video/requirements_avatar.txt > /tmp/req_avatar.txt \
+    && /opt/longcat/bin/pip install -r /tmp/req_avatar.txt "huggingface_hub[cli]" \
     && cd /models/LongCat-Video && /opt/longcat/bin/python -c "import torch, flash_attn, diffusers, transformers; print('longcat venv: torch', torch.__version__, 'flash_attn', flash_attn.__version__, 'diffusers', diffusers.__version__)"
 ENV LONGCAT_DIR=/models/LongCat-Video LONGCAT_PYTHON=/opt/longcat/bin/python
 
