@@ -552,7 +552,15 @@ def run_longcat(job: dict, work: Path, image: Path, audio: Path) -> Path:
     ensure_longcat_weights()
     out_dir = work / "longcat_out"
     out_dir.mkdir()
-    cond = {"prompt": job["prompt"], "cond_image": str(image), "cond_audio": {"person1": str(audio)}}
+    # LongCat follows the prompt's description of delivery closely; its distilled recipe fixes the audio
+    # guidance, so the prompt and the audio loudness are the controls against over-articulation.
+    delivery = os.environ.get("LONGCAT_DELIVERY", "speaking calmly and naturally to the camera, subtle mouth movements, "
+                              "relaxed face, gentle head motion, no exaggerated expressions")
+    prompt = f"{job['prompt']}. {delivery}"
+    norm_audio = work / "voice_norm.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(audio), "-af", "loudnorm=I=-23:TP=-2:LRA=11",
+                    "-ar", "16000", "-ac", "1", str(norm_audio)], check=True, timeout=300)
+    cond = {"prompt": prompt, "cond_image": str(image), "cond_audio": {"person1": str(norm_audio)}}
     (work / "longcat_input.json").write_text(json.dumps(cond))
     # The script renders 93 frames at 25 fps, then 80 new frames per extra segment; it does not derive
     # the segment count from the audio, so compute it here.
