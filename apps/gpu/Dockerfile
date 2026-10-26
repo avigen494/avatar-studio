@@ -53,6 +53,23 @@ RUN pip install --force-reinstall --no-deps torch==2.8.0 torchvision==0.23.0 tor
 # mediapipe (LatentSync) ships protobuf 3 generated code; the pure-Python protobuf runtime accepts it.
 ENV PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
 
+# --- LongCat-Video-Avatar 1.5 (MIT): photo + audio -> talking video, 8-step distilled --------------
+# It pins torch 2.6 + flash-attn 2.7.4 + transformers 4.41, which clash with the stack above, so it
+# gets its own venv. flash-attn comes as a prebuilt wheel; the C++ ABI of the torch wheel decides
+# which variant imports, so try both and keep the one that loads.
+RUN git clone --depth 1 https://github.com/meituan-longcat/LongCat-Video.git /models/LongCat-Video
+RUN python -m venv /opt/longcat && /opt/longcat/bin/pip install --upgrade pip wheel \
+    && /opt/longcat/bin/pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124 \
+    && ( /opt/longcat/bin/pip install "https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1%2Bcu12torch2.6cxx11abiTRUE-cp311-cp311-linux_x86_64.whl" \
+         && /opt/longcat/bin/python -c "import flash_attn" \
+      || ( /opt/longcat/bin/pip uninstall -y flash_attn \
+           && /opt/longcat/bin/pip install "https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1%2Bcu12torch2.6cxx11abiFALSE-cp311-cp311-linux_x86_64.whl" \
+           && /opt/longcat/bin/python -c "import flash_attn" ) ) \
+    && /opt/longcat/bin/pip install -r /models/LongCat-Video/requirements.txt \
+    && /opt/longcat/bin/pip install -r /models/LongCat-Video/requirements_avatar.txt "huggingface_hub[cli]" \
+    && cd /models/LongCat-Video && /opt/longcat/bin/python -c "import torch, flash_attn, diffusers, transformers; print('longcat venv: torch', torch.__version__, 'flash_attn', flash_attn.__version__, 'diffusers', diffusers.__version__)"
+ENV LONGCAT_DIR=/models/LongCat-Video LONGCAT_PYTHON=/opt/longcat/bin/python
+
 # Weights root on the network volume. Override WEIGHTS_ROOT to keep them elsewhere.
 ENV WEIGHTS_ROOT=/runpod-volume/models
 ENV WAN_DIR=/models/Wan2.2 INFINITETALK_DIR=/models/InfiniteTalk LATENTSYNC_DIR=/models/LatentSync \

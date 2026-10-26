@@ -48,6 +48,10 @@ GFPGAN_DIR = Path(os.environ.get("GFPGAN_DIR", "/models/GFPGAN"))
 GFPGAN_WEIGHTS = Path(os.environ.get("GFPGAN_WEIGHTS", str(WEIGHTS_ROOT / "GFPGAN")))
 RIFE_DIR = Path(os.environ.get("RIFE_DIR", "/models/Practical-RIFE"))
 DIFFSYNTH_DIR = Path(os.environ.get("DIFFSYNTH_DIR", "/models/DiffSynth-Studio"))
+# LongCat-Video-Avatar 1.5 (MIT) needs torch 2.6 + flash-attn 2.7.4, so it lives in its own venv.
+LONGCAT_DIR = Path(os.environ.get("LONGCAT_DIR", "/models/LongCat-Video"))
+LONGCAT_PYTHON = os.environ.get("LONGCAT_PYTHON", "/opt/longcat/bin/python")
+LONGCAT_WEIGHTS = Path(os.environ.get("LONGCAT_WEIGHTS", str(WEIGHTS_ROOT / "LongCat-Video-Avatar-1.5")))
 
 # What ensure_weights() fetches: (Hugging Face repo, folder under WEIGHTS_ROOT, file that proves it is
 # complete, allow patterns). The patterns matter: the full repos are 311 GB, the files we use are ~152 GB.
@@ -62,6 +66,16 @@ WEIGHT_SETS = [
      ["Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors"]),
 ]
 INFINITETALK_DISTILL_LORA = "weights/lora/Lightx2v/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors"
+# LongCat-Video-Avatar 1.5: the avatar DiT + DMD LoRA + Whisper + vocal separator, and from the base
+# LongCat-Video repo only the parts v1.5 reuses (text encoder, tokenizer, VAE). ~61 GB together; the
+# run script resolves the base folder as <checkpoint_dir>/../LongCat-Video, so both sit under WEIGHTS_ROOT.
+LONGCAT_WEIGHT_SETS = [
+    ("meituan-longcat/LongCat-Video", "LongCat-Video", "vae/config.json",
+     ["text_encoder/*", "tokenizer/*", "vae/*", "scheduler/*", "*.json"]),
+    ("meituan-longcat/LongCat-Video-Avatar-1.5", "LongCat-Video-Avatar-1.5", "base_model/config.json",
+     ["base_model/*", "lora/*", "scheduler/*", "vocal_separator/*", "*.json",
+      "whisper-large-v3/model.safetensors", "whisper-large-v3/*.json", "whisper-large-v3/*.txt"]),
+]
 # Folders an earlier, unfiltered download may have left behind; they are not used and waste the volume.
 UNUSED_WEIGHT_DIRS = ["weights/InfiniteTalk/quant_models", "weights/InfiniteTalk/multi", "weights/InfiniteTalk/comfyui",
                       "weights/Wan2.1-I2V-14B-480P/assets", "weights/Wan2.1-I2V-14B-480P/examples", "Wan2.2-S2V-14B/assets"]
@@ -516,6 +530,47 @@ def run_infinitetalk(job: dict, work: Path, media_path: Path, audio: Path, v2v: 
     return newest_mp4(out_dir)
 
 
+def ensure_longcat_weights() -> None:
+    """Downloads LongCat's weight sets on first use (they are optional for the other engines)."""
+    missing = [w for w in LONGCAT_WEIGHT_SETS if not (WEIGHTS_ROOT / w[1] / w[2]).exists()]
+    if not missing:
+        return
+    from huggingface_hub import snapshot_download  # noqa: PLC0415
+
+    for repo, sub, _marker, allow in missing:
+        print(f"[weights] downloading {repo} -> {WEIGHTS_ROOT / sub} (patterns {allow})", flush=True)
+        snapshot_download(repo_id=repo, local_dir=str(WEIGHTS_ROOT / sub), allow_patterns=allow,
+                          token=os.environ.get("HF_TOKEN") or None)
+
+
+def run_longcat(job: dict, work: Path, image: Path, audio: Path) -> Path:
+    """LongCat-Video-Avatar 1.5, distilled 8-step recipe (text/audio guidance fixed at 1.0 by the script)."""
+    import json  # noqa: PLC0415
+    import math  # noqa: PLC0415
+
+    _RESIDENT.unload()
+    ensure_longcat_weights()
+    out_dir = work / "longcat_out"
+    out_dir.mkdir()
+    cond = {"prompt": job["prompt"], "cond_image": str(image), "cond_audio": {"person1": str(audio)}}
+    (work / "longcat_input.json").write_text(json.dumps(cond))
+    # The script renders 93 frames at 25 fps, then 80 new frames per extra segment; it does not derive
+    # the segment count from the audio, so compute it here.
+    frames = audio_duration_s(audio) * 25
+    segments = max(1, math.ceil((frames - 93) / 80) + 1)
+    resolution = "720p" if max(job["width"], job["height"]) > 832 else "480p"
+    cmd = [LONGCAT_PYTHON, "-m", "torch.distributed.run", "--nproc_per_node=1", "--master_port", "29571",
+           str(LONGCAT_DIR / "run_demo_avatar_single_audio_to_video.py"),
+           "--checkpoint_dir", str(LONGCAT_WEIGHTS), "--stage_1", "ai2v", "--input_json", str(work / "longcat_input.json"),
+           "--output_dir", str(out_dir), "--resolution", resolution, "--num_segments", str(segments),
+           "--use_distill", "--model_type", "avatar-v1.5", "--ref_img_index", "10", "--mask_frame_range", "3"]
+    if gpu_memory_gb() < 70:
+        cmd.append("--use_int8")
+    print(f"[longcat] {segments} segment(s) for {frames / 25:.1f} s of speech at {resolution}", flush=True)
+    sh(cmd, cwd=LONGCAT_DIR)
+    return newest_mp4(out_dir)  # video_continue_<n> holds the full video; ai2v_demo_1 when one segment
+
+
 def run_latentsync(job: dict, work: Path, video: Path, audio: Path) -> Path:
     _RESIDENT.unload()
     out = work / "latentsync.mp4"
@@ -700,6 +755,8 @@ def handler(event: dict) -> dict:
             return gpu_diag()
         if task == "warmup":
             ensure_weights()
+            if "longcat" in (job.get("engines") or []):
+                ensure_longcat_weights()
             return {"ok": True, "image_tag": IMAGE_TAG, "weights_root": str(WEIGHTS_ROOT),
                     "gpu_seconds": round(time.time() - started, 1)}
         if task not in ("quality_check", "face_match"):
@@ -746,6 +803,8 @@ def handler(event: dict) -> dict:
 
         if engine == "wan_s2v":
             raw = run_wan_s2v(job, work, image, audio)
+        elif engine == "longcat":
+            raw = run_longcat(job, work, image, audio)
         elif engine == "infinitetalk":
             raw = run_infinitetalk(job, work, image, audio, v2v=False)
         elif engine == "infinitetalk_v2v":

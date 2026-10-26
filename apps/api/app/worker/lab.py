@@ -45,7 +45,7 @@ def run_engine_trial(db: Session, job: Job) -> None:
             look_path = storage.get_to_file(trial.look_key, work / f"look{Path(trial.look_key).suffix}")
         if trial.reference_key:
             reference_path = storage.get_to_file(trial.reference_key, work / "reference.mp4")
-        if trial.engine in ("wan_s2v", "infinitetalk", "mock") and not look_path and reference_path:
+        if trial.engine in ("wan_s2v", "infinitetalk", "longcat", "mock") and not look_path and reference_path:
             look_path = work / "look.jpg"
             media.thumbnail(reference_path, look_path, 1.0)
         if trial.engine in ("infinitetalk_v2v", "latentsync") and not reference_path:

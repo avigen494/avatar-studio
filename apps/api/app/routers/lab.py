@@ -29,6 +29,7 @@ router = APIRouter(prefix="/lab", tags=["lab"])
 ENGINES = {
     "wan_s2v": "Wan2.2-S2V-14B (photo)",
     "infinitetalk": "InfiniteTalk (photo)",
+    "longcat": "LongCat-Video-Avatar 1.5 (photo)",
     "infinitetalk_v2v": "InfiniteTalk V2V (real footage)",
     "latentsync": "LatentSync 1.6 (mouth only)",
     "mock": "ffmpeg mock (local check)",
@@ -209,7 +210,7 @@ async def create_trial(body: TrialIn, ctx: Ctx = Depends(require_admin)) -> Tria
         raise ApiError(400, "voice_required", "Pick a voice.")
     if body.engine in ("infinitetalk_v2v", "latentsync") and not body.reference_key:
         raise ApiError(400, "reference_required", "This engine needs the real clip.")
-    if body.engine in ("wan_s2v", "infinitetalk", "mock") and not body.look_key and not body.reference_key:
+    if body.engine in ("wan_s2v", "infinitetalk", "longcat", "mock") and not body.look_key and not body.reference_key:
         raise ApiError(400, "look_required", "Upload the photo.")
     ctx.db.add(t)
     await ctx.db.flush()
